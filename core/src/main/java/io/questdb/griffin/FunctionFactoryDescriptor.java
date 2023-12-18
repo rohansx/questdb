@@ -167,6 +167,9 @@ public class FunctionFactoryDescriptor {
             case 'z':
                 sigArgType = ColumnType.UUID;
                 break;
+            case 'x':
+                sigArgType = ColumnType.IPv4;
+                break;
             default:
                 sigArgType = -1;
                 break;
@@ -184,7 +187,7 @@ public class FunctionFactoryDescriptor {
 
     public static String replaceSignatureName(String name, String signature) throws SqlException {
         int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        StringSink signatureBuilder = Misc.getThreadLocalSink();
         signatureBuilder.put(name);
         signatureBuilder.put(signature, openBraceIndex, signature.length());
         return signatureBuilder.toString();
@@ -192,7 +195,7 @@ public class FunctionFactoryDescriptor {
 
     public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
         int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
+        StringSink signatureBuilder = Misc.getThreadLocalSink();
         signatureBuilder.put(name);
         signatureBuilder.put('(');
         for (int i = signature.length() - 2; i > openBraceIndex; i--) {
@@ -328,6 +331,7 @@ public class FunctionFactoryDescriptor {
         typeNameMap.put('w', "array_string");
         typeNameMap.put('j', "long128");
         typeNameMap.put('z', "uuid");
+        typeNameMap.put('x', "ipv4");
         typeNameMap.put('[' | 32, "[]");
     }
 }

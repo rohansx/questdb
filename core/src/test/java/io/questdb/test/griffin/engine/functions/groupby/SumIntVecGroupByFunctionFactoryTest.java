@@ -24,16 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
+public class SumIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumn() throws Exception {
         // fix page frame size, because it affects AVG accuracy
         pageFrameMaxRows = 10_000;
-        assertQuery13(
+        assertQuery(
                 "avg\n" +
                         "5261.376146789\n",
                 "select round(avg(f),9) avg from tab",
@@ -43,7 +43,8 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "avg\n" +
                         "5261.376146789\n",
                 false,
-                true
+                true,
+                false
         );
 
         assertQuery(
@@ -59,7 +60,7 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testAllNullThenOne() throws Exception {
-        assertQuery13(
+        assertQuery(
                 "sum\n" +
                         "NaN\n",
                 "select sum(f) from tab",
@@ -69,7 +70,8 @@ public class SumIntVecGroupByFunctionFactoryTest extends AbstractGriffinTest {
                 "sum\n" +
                         "4567866\n",
                 false,
-                true
+                true,
+                false
         );
     }
 

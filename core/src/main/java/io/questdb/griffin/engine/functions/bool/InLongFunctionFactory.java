@@ -68,7 +68,7 @@ public class InLongFunctionFactory implements FunctionFactory {
                 case ColumnType.SYMBOL:
                     break;
                 default:
-                    throw SqlException.position(0).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
+                    throw SqlException.position(argPositions.get(i)).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
             }
             if (!func.isConstant()) {
                 allConst = false;
@@ -128,7 +128,7 @@ public class InLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            long ts = tsFunc.getTimestamp(rec);
+            long ts = tsFunc.getLong(rec);
             return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
         }
 

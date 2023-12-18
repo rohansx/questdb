@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
@@ -110,6 +111,11 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public int getIPv4(Record rec) {
+            return 0;
+        }
+
+        @Override
         public int getInt(Record rec) {
             return 0;
         }
@@ -130,7 +136,7 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void getLong256(Record rec, CharSink sink) {
+        public void getLong256(Record rec, CharSinkBase<?> sink) {
         }
 
         @Override
@@ -214,11 +220,6 @@ public class GroupByFunctionTest {
         @Override
         public int getType() {
             return 0;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override

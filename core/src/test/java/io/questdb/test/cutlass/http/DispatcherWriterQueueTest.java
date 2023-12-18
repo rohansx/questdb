@@ -29,17 +29,14 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
-import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.AbstractTest;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -53,21 +50,14 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class DispatcherWriterQueueTest extends AbstractTest {
-    private static final String utf8Encoding = "UTF-8";
+public class DispatcherWriterQueueTest extends AbstractCairoTest {
+    private static final String UTF_8 = "UTF-8";
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-    private SqlCompiler compiler;
     private Error error = null;
-    private SqlExecutionContext sqlExecutionContext;
-
-    public void setupSql(CairoEngine engine) {
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(engine.getConfiguration()));
-    }
 
     @Test
     public void testAlterTableAddCacheAlterCache() throws Exception {
@@ -112,7 +102,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "default/s.v") || Chars.endsWith(name, "default\\s.v")) {
+                        if (Utf8s.endsWithAscii(name, "default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                             disconnectLatch.countDown();
                         }
@@ -164,7 +154,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "default\\s.v")) {
+                        if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "default\\s.v")) {
                             alterAckReceived.await();
                         }
                         return super.openRW(name, opts);
@@ -198,7 +188,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "/default/s.v") || Chars.endsWith(name, "\\default\\s.v")) {
+                        if (Utf8s.endsWithAscii(name, "/default/s.v") || Utf8s.endsWithAscii(name, "\\default\\s.v")) {
                             alterAckReceived.await();
                             Os.sleep(500);
                         }
@@ -291,7 +281,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "x.d.1")) {
+                        if (Utf8s.endsWithAscii(name, "x.d.1")) {
                             Os.sleep(50);
                         }
                         return super.openRW(name, opts);
@@ -309,7 +299,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 null,
                 1,
                 3,
-                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", utf8Encoding)
+                URLEncoder.encode("update x set x=1 from tables() where s = 'a'", UTF_8)
         );
     }
 
@@ -346,8 +336,8 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 null,
                 -1L,
                 3,
-                URLEncoder.encode("update x set x=1 where s = 'a'", utf8Encoding),
-                URLEncoder.encode("update x set x=10 where s = 'b'", utf8Encoding)
+                URLEncoder.encode("update x set x=1 where s = 'a'", UTF_8),
+                URLEncoder.encode("update x set x=10 where s = 'b'", UTF_8)
         );
     }
 
@@ -365,7 +355,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "x.d.1")) {
+                        if (Utf8s.endsWithAscii(name, "x.d.1")) {
                             disconnectLatch.countDown();
                         }
                         return super.openRW(name, opts);
@@ -383,7 +373,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 null,
                 1000,
                 0,
-                URLEncoder.encode("update x set x=1 from tables()", utf8Encoding)
+                URLEncoder.encode("update x set x=1 from tables()", UTF_8)
         );
     }
 
@@ -420,15 +410,17 @@ public class DispatcherWriterQueueTest extends AbstractTest {
             final String... httpAlterQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
-            setupSql(engine);
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
-                        " select rnd_symbol('a', 'b', 'c') as s," +
-                        " cast(x as timestamp) ts" +
-                        " from long_sequence(10)" +
-                        " )", sqlExecutionContext);
+                engine.ddl(
+                        "create table IF NOT EXISTS " + tableName + " as (" +
+                                " select rnd_symbol('a', 'b', 'c') as s," +
+                                " cast(x as timestamp) ts" +
+                                " from long_sequence(10)" +
+                                " )",
+                        sqlExecutionContext
+                );
                 writer = TestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpAlterQueries.length);
                 AtomicInteger errors = new AtomicInteger();
@@ -491,7 +483,6 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 if (writer != null) {
                     writer.close();
                 }
-                compiler.close();
             }
         });
     }
@@ -525,16 +516,17 @@ public class DispatcherWriterQueueTest extends AbstractTest {
             final String... httpUpdateQueries
     ) throws Exception {
         queryTestBuilder.run((engine) -> {
-            setupSql(engine);
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                compiler.compile("create table IF NOT EXISTS " + tableName + " as (" +
-                        " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
-                        " x," +
-                        " cast(x as timestamp) ts" +
-                        " from long_sequence(9)" +
-                        " )", sqlExecutionContext);
+                engine.ddl("create table IF NOT EXISTS " + tableName + " as (" +
+                                " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
+                                " x," +
+                                " cast(x as timestamp) ts" +
+                                " from long_sequence(9)" +
+                                " )",
+                        sqlExecutionContext
+                );
                 writer = TestUtils.getWriter(engine, tableName);
                 SOCountDownLatch finished = new SOCountDownLatch(httpUpdateQueries.length);
                 AtomicInteger errors = new AtomicInteger();
@@ -609,7 +601,6 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 if (writer != null) {
                     writer.close();
                 }
-                compiler.close();
             }
         });
     }
@@ -637,7 +628,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
                 .withFilesFacade(new TestFilesFacadeImpl() {
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        if (Chars.endsWith(name, "default/ts.d.2") || Chars.endsWith(name, "default\\ts.d.2")) {
+                        if (Utf8s.endsWithAscii(name, "default/ts.d.2") || Utf8s.endsWithAscii(name, "default\\ts.d.2")) {
                             updateAckReceived.await();
                         }
                         return super.openRW(name, opts);
@@ -775,7 +766,7 @@ public class DispatcherWriterQueueTest extends AbstractTest {
 
     @FunctionalInterface
     interface AlterVerifyAction {
-        void run(TableWriter writer, TableReader rdr) throws InterruptedException;
+        void run(TableWriter writer, TableReader rdr);
     }
 
     @FunctionalInterface

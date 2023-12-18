@@ -27,7 +27,9 @@ package io.questdb.cairo.pool;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
@@ -36,7 +38,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
     private final CairoEngine engine;
 
     public WalWriterPool(CairoConfiguration configuration, CairoEngine engine) {
-        super(configuration);
+        super(configuration, configuration.getWalWriterPoolMaxSegments(), configuration.getInactiveWalWriterTTL());
         this.engine = engine;
     }
 
@@ -47,10 +49,19 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
 
     @Override
     protected WalWriterTenant newTenant(TableToken tableToken, Entry<WalWriterTenant> entry, int index) {
-        return new WalWriterTenant(this, entry, index, tableToken, engine.getTableSequencerAPI(), engine.getMetrics());
+        return new WalWriterTenant(
+                this,
+                entry,
+                index,
+                tableToken,
+                engine.getTableSequencerAPI(),
+                engine.getDdlListener(tableToken),
+                engine.getWalDirectoryPolicy(),
+                engine.getMetrics()
+        );
     }
 
-    public static class WalWriterTenant extends WalWriter implements PoolTenant {
+    public static class WalWriterTenant extends WalWriter implements PoolTenant<WalWriterTenant> {
         private final int index;
         private Entry<WalWriterTenant> entry;
         private AbstractMultiTenantPool<WalWriterTenant> pool;
@@ -61,9 +72,11 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI,
+                DdlListener ddlListener,
+                WalDirectoryPolicy walDirectoryPolicy,
                 Metrics metrics
         ) {
-            super(pool.getConfiguration(), tableToken, tableSequencerAPI, metrics);
+            super(pool.getConfiguration(), tableToken, tableSequencerAPI, ddlListener, walDirectoryPolicy, metrics);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -72,6 +85,7 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
         @Override
         public void close() {
             if (isOpen()) {
+                rollback();
                 final AbstractMultiTenantPool<WalWriterTenant> pool = this.pool;
                 if (pool != null && entry != null) {
                     if (!isDistressed()) {
@@ -91,7 +105,6 @@ public class WalWriterPool extends AbstractMultiTenantPool<WalWriterPool.WalWrit
             }
         }
 
-        @SuppressWarnings("unchecked")
         @Override
         public Entry<WalWriterTenant> getEntry() {
             return entry;

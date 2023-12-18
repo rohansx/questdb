@@ -34,6 +34,8 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 
+import java.util.Map;
+
 public class Overrides implements ConfigurationOverrides {
     private String attachableDirSuffix = null;
     private CharSequence backupDir;
@@ -48,12 +50,11 @@ public class Overrides implements ConfigurationOverrides {
     private Boolean copyPartitionOnAttach = null;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
-    private int o3PartitionSplitMaxCount = -1;
-    private long partitionO3SplitThreshold;
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     private long dataAppendPageSize = -1;
     private CharSequence defaultMapType;
     private int defaultTableWriteMode = SqlWalMode.WAL_NOT_SET;
+    private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
     private boolean hideTelemetryTable = false;
@@ -68,29 +69,39 @@ public class Overrides implements ConfigurationOverrides {
     private int o3ColumnMemorySize = -1;
     private long o3MaxLag = -1;
     private long o3MinLag = -1;
+    private int o3PartitionSplitMaxCount = -1;
     private boolean o3QuickSortEnabled = false;
     private int pageFrameMaxRows = -1;
     private int pageFrameReduceQueueCapacity = -1;
     private int pageFrameReduceShardCount = -1;
     private Boolean parallelFilterEnabled = null;
     private int parallelImportStatusLogKeepNDays = -1;
-    private int queryCacheEventQueueCapacity = -1;
+    private long partitionO3SplitThreshold;
     private int recreateDistressedSequencerAttempts = 3;
     private int repeatMigrationsFromVersion = -1;
     private int rndFunctionMemoryMaxPages = -1;
     private int rndFunctionMemoryPageSize = -1;
     private RostiAllocFacade rostiAllocFacade = null;
     private int sampleByIndexSearchPageSize;
+    private boolean simulateCrashEnabled;
     private String snapshotInstanceId = null;
     private Boolean snapshotRecoveryEnabled = null;
     private long spinLockTimeout = -1;
     private int sqlCopyBufferSize = 1024 * 1024;
     private int sqlJoinMetadataMaxResizes = -1;
     private int sqlJoinMetadataPageSize = -1;
+    private int sqlWindowMaxRecursion;
+    private int sqlWindowStoreMaxPages;
+    private int sqlWindowStorePageSize;
     private int tableRegistryCompactionThreshold;
-    private long walApplyTableTimeQuote = -1;
+    private long walApplyTableTimeQuota = -1;
+    private int walLookAheadTransactionCount = -1;
+    private int walMaxSegmentFileDescriptorsCache = -1;
+    private long walMaxLagSize = -1;
+    private int walMaxLagTxnCount = -1;
     private long walPurgeInterval = -1;
     private long walSegmentRolloverRowCount = -1;
+    private long walSegmentRolloverSize = -1;
     private int walTxnNotificationQueueCapacity = -1;
     private long writerAsyncCommandBusyWaitTimeout = -1;
     private long writerAsyncCommandMaxTimeout = -1;
@@ -166,6 +177,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getDefaultTableWriteMode() {
         return defaultTableWriteMode;
+    }
+
+    @Override
+    public Map<String, String> getEnv() {
+        return env != null ? env : System.getenv();
     }
 
     @Override
@@ -254,11 +270,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public int getQueryCacheEventQueueCapacity() {
-        return queryCacheEventQueueCapacity;
-    }
-
-    @Override
     public int getRecreateDistressedSequencerAttempts() {
         return recreateDistressedSequencerAttempts;
     }
@@ -286,6 +297,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return sampleByIndexSearchPageSize;
+    }
+
+    @Override
+    public boolean getSimulateCrashEnabled() {
+        return simulateCrashEnabled;
     }
 
     @Override
@@ -318,6 +334,18 @@ public class Overrides implements ConfigurationOverrides {
         return sqlJoinMetadataPageSize;
     }
 
+    public int getSqlWindowMaxRecursion() {
+        return sqlWindowMaxRecursion;
+    }
+
+    public int getSqlWindowStoreMaxPages() {
+        return sqlWindowStoreMaxPages;
+    }
+
+    public int getSqlWindowStorePageSize() {
+        return sqlWindowStorePageSize;
+    }
+
     @Override
     public int getTableRegistryCompactionThreshold() {
         return tableRegistryCompactionThreshold;
@@ -329,8 +357,28 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public long getWalApplyTableTimeQuote() {
-        return walApplyTableTimeQuote;
+    public int getWalApplyLookAheadTransactionCount() {
+        return walLookAheadTransactionCount;
+    }
+
+    @Override
+    public long getWalApplyTableTimeQuota() {
+        return walApplyTableTimeQuota;
+    }
+
+    @Override
+    public int getWalMaxSegmentFileDescriptorsCache() {
+        return walMaxSegmentFileDescriptorsCache;
+    }
+
+    @Override
+    public long getWalMaxLagSize() {
+        return walMaxLagSize;
+    }
+
+    @Override
+    public int getWalMaxLagTxnCount() {
+        return walMaxLagTxnCount;
     }
 
     @Override
@@ -341,6 +389,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public long getWalSegmentRolloverRowCount() {
         return walSegmentRolloverRowCount;
+    }
+
+    @Override
+    public long getWalSegmentRolloverSize() {
+        return walSegmentRolloverSize;
     }
 
     @Override
@@ -426,7 +479,6 @@ public class Overrides implements ConfigurationOverrides {
         writerMixedIOEnabled = null;
         columnPreTouchEnabled = null;
         writerCommandQueueCapacity = 4;
-        queryCacheEventQueueCapacity = -1;
         pageFrameReduceShardCount = -1;
         pageFrameReduceQueueCapacity = -1;
         columnVersionPurgeQueueCapacity = -1;
@@ -448,9 +500,14 @@ public class Overrides implements ConfigurationOverrides {
         walPurgeInterval = -1;
         tableRegistryCompactionThreshold = -1;
         maxOpenPartitions = -1;
-        walApplyTableTimeQuote = -1;
+        walApplyTableTimeQuota = -1;
+        walLookAheadTransactionCount = -1;
+        walMaxLagTxnCount = -1;
         repeatMigrationsFromVersion = -1;
         factoryProvider = null;
+        simulateCrashEnabled = false;
+        env = null;
+        walMaxLagSize = -1;
     }
 
     @Override
@@ -526,6 +583,10 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setDefaultTableWriteMode(int defaultTableWriteMode) {
         this.defaultTableWriteMode = defaultTableWriteMode;
+    }
+
+    public void setEnv(Map<String, String> env) {
+        this.env = env;
     }
 
     @Override
@@ -639,11 +700,6 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
-    public void setQueryCacheEventQueueCapacity(int queryCacheEventQueueCapacity) {
-        this.queryCacheEventQueueCapacity = queryCacheEventQueueCapacity;
-    }
-
-    @Override
     public void setRecreateDistressedSequencerAttempts(int recreateDistressedSequencerAttempts) {
         this.recreateDistressedSequencerAttempts = recreateDistressedSequencerAttempts;
     }
@@ -679,6 +735,11 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setSimulateCrashEnabled(boolean enabled) {
+        this.simulateCrashEnabled = enabled;
+    }
+
+    @Override
     public void setSnapshotInstanceId(String snapshotInstanceId) {
         this.snapshotInstanceId = snapshotInstanceId;
     }
@@ -709,12 +770,48 @@ public class Overrides implements ConfigurationOverrides {
     }
 
     @Override
+    public void setSqlWindowMaxRecursion(int maxRecursion) {
+        this.sqlWindowMaxRecursion = maxRecursion;
+    }
+
+    @Override
+    public void setSqlWindowStoreMaxPages(int windowStoreMaxPages) {
+        this.sqlWindowStoreMaxPages = windowStoreMaxPages;
+    }
+
+    @Override
+    public void setSqlWindowStorePageSize(int windowStorePageSize) {
+        this.sqlWindowStorePageSize = windowStorePageSize;
+    }
+
+    @Override
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         this.testMicrosClock = testMicrosClock;
     }
 
-    public void setWalApplyTableTimeQuote(long walApplyTableTimeQuote) {
-        this.walApplyTableTimeQuote = walApplyTableTimeQuote;
+    @Override
+    public void setWalApplyTableTimeQuota(long walApplyTableTimeQuota) {
+        this.walApplyTableTimeQuota = walApplyTableTimeQuota;
+    }
+
+    @Override
+    public void setWalLookAheadTransactionCount(int walLookAheadTransactionCount) {
+        this.walLookAheadTransactionCount = walLookAheadTransactionCount;
+    }
+
+    @Override
+    public void setWalMaxSegmentFileDescriptorsCache(int value) {
+        walMaxSegmentFileDescriptorsCache = value;
+    }
+
+    @Override
+    public void setWalMaxLagSize(long value) {
+        walMaxLagSize = value;
+    }
+
+
+    public void setWalMaxLagTxnCount(int walMaxLagTxnCount) {
+        this.walMaxLagTxnCount = walMaxLagTxnCount;
     }
 
     @Override
@@ -725,6 +822,11 @@ public class Overrides implements ConfigurationOverrides {
     @Override
     public void setWalSegmentRolloverRowCount(long walSegmentRolloverRowCount) {
         this.walSegmentRolloverRowCount = walSegmentRolloverRowCount;
+    }
+
+    @Override
+    public void setWalSegmentRolloverSize(long walSegmentRolloverSize) {
+        this.walSegmentRolloverSize = walSegmentRolloverSize;
     }
 
     @Override

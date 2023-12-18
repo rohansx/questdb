@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -33,9 +32,7 @@ import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,12 +41,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
-public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfLightJoinRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public AsOfJoinLightRecordCursorFactory(
@@ -64,12 +58,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             int columnSplit,
             JoinContext joinContext
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, joinContext, masterFactory, slaveFactory);
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
-        this.joinContext = joinContext;
 
         Map joinKeyMap = MapFactory.createMap(configuration, joinColumnTypes, valueTypes);
         this.cursor = new AsOfLightJoinRecordCursor(
@@ -148,6 +139,11 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractRecordCursorFactor
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             isOpen = true;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            masterCursor.calculateSize(circuitBreaker, counter);
         }
 
         @Override

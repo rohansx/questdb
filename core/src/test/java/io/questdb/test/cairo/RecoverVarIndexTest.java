@@ -27,42 +27,25 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class RecoverVarIndexTest extends AbstractCairoTest {
-    private static SqlCompiler compiler;
-    private static SqlExecutionContext sqlExecutionContext;
     private final RecoverVarIndex rebuildVarColumn = new RecoverVarIndex(configuration);
     TableWriter tempWriter;
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractCairoTest.setUpStatic();
-        compiler = new SqlCompiler(engine);
-        sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, new BindVariableServiceImpl(configuration));
-    }
-
-    @AfterClass
-    public static void tearDownStatic() throws Exception {
-        compiler.close();
-        LogFactory.configureAsync();
-        AbstractCairoTest.tearDownStatic();
-    }
 
     @After
     public void cleanup() {
@@ -133,11 +116,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     RecoverVarIndex::rebuildAll);
 
             engine.releaseAllWriters();
-            compiler
-                    .compile("insert into xxx values(500100000000L, 50001, 'D', 'I2')", sqlExecutionContext)
-                    .getInsertOperation()
-                    .execute(sqlExecutionContext)
-                    .await();
+            insert("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
             int sym1D = countByFullScanWhereValueD();
             Assert.assertEquals(1, sym1D);
         });
@@ -316,7 +295,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Chars.contains(name, "str2.i") && count.incrementAndGet() == 14) {
+                    if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 14) {
                         return -1;
                     }
                     return super.openRW(name, opts);
@@ -360,28 +339,28 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     private void checkRecoverVarIndex(String createTableSql, Action<String> changeTable, Action<RecoverVarIndex> rebuildIndexAction) throws Exception {
         assertMemoryLeak(ff, () -> {
             for (String sql : createTableSql.split(";")) {
-                compiler.compile(sql, sqlExecutionContext).execute(null).await();
+                ddl(sql);
             }
-            compiler.compile("create table copytbl as (select * from xxx)", sqlExecutionContext);
+            ddl("create table copytbl as (select * from xxx)", sqlExecutionContext);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
 
             TableToken xxx = engine.verifyTableName("xxx");
-            String tablePath = configuration.getRoot().toString() + Files.SEPARATOR + xxx.getDirName();
+            String tablePath = configuration.getRoot() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             rebuildVarColumn.clear();
-            rebuildVarColumn.of(tablePath);
+            rebuildVarColumn.of(new Utf8String(tablePath));
             rebuildIndexAction.run(rebuildVarColumn);
 
-            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "copytbl", "xxx", LOG);
+            assertSqlCursors("copytbl", "xxx");
         });
     }
 
     private int countByFullScanWhereValueD() throws SqlException {
         int recordCount = 0;
-        try (RecordCursorFactory factory = compiler.compile("select * from xxx where str1 = 'D'", sqlExecutionContext).getRecordCursorFactory()) {
+        try (RecordCursorFactory factory = select("select * from xxx where str1 = 'D'")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 while (cursor.hasNext()) {
                     recordCount++;
@@ -397,7 +376,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             path.put(Files.SEPARATOR);
             TableUtils.setPathForPartition(path, partitionBy, partitionTs, partitionNameTxn);
             path.concat(fileName);
-            LOG.info().$("removing ").utf8(path).$();
+            LOG.info().$("removing ").$(path).$();
             Assert.assertTrue(Files.remove(path.$()));
         }
     }

@@ -29,10 +29,7 @@ import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.http.processors.HealthCheckProcessor;
-import io.questdb.cutlass.http.processors.JsonQueryProcessor;
-import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
-import io.questdb.cutlass.http.processors.QueryCache;
+import io.questdb.cutlass.http.processors.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -42,26 +39,22 @@ import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.Nullable;
 
-public final class Services {
+public class Services {
+    public static final Services INSTANCE = new Services();
 
-    private Services() {
-        throw new UnsupportedOperationException("not instantiatable");
+    protected Services() {
     }
 
     @Nullable
-    public static HttpServer createHttpServer(
+    public HttpServer createHttpServer(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
@@ -74,37 +67,41 @@ public final class Services {
         return createHttpServer(
                 configuration,
                 cairoEngine,
-                workerPoolManager.getInstance(configuration, metrics.health(), Requester.HTTP_SERVER),
+                workerPoolManager.getInstance(configuration, metrics, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
-                functionFactoryCache,
-                snapshotAgent,
                 metrics
         );
     }
 
     @Nullable
-    public static HttpServer createHttpServer(
+    public HttpServer createHttpServer(
             HttpServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
-            @Nullable FunctionFactoryCache functionFactoryCache,
-            @Nullable DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
-        QueryCache.configure(configuration, metrics);
+        final HttpCookieHandler cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
+        final HttpHeaderParserFactory headerParserFactory = configuration.getFactoryProvider().getHttpHeaderParserFactory();
+        final HttpServer server = new HttpServer(configuration, metrics, workerPool,
+                configuration.getFactoryProvider().getHttpSocketFactory(), cookieHandler, headerParserFactory
+        );
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 configuration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
-                sharedWorkerCount,
-                functionFactoryCache,
-                snapshotAgent
+                sharedWorkerCount
+        );
+
+        HttpServer.HttpRequestProcessorBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessor(
+                cairoEngine,
+                configuration.getHttpContextConfiguration().getRecvBufferSize(),
+                configuration.getHttpContextConfiguration().getSendBufferSize(),
+                configuration.getLineHttpProcessorConfiguration()
         );
 
         HttpServer.addDefaultEndpoints(
@@ -114,14 +111,13 @@ public final class Services {
                 workerPool,
                 sharedWorkerCount,
                 jsonQueryProcessorBuilder,
-                functionFactoryCache,
-                snapshotAgent
+                ilpV2WriteProcessorBuilder
         );
         return server;
     }
 
     @Nullable
-    public static LineTcpReceiver createLineTcpReceiver(
+    public LineTcpReceiver createLineTcpReceiver(
             LineTcpReceiverConfiguration config,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
@@ -144,19 +140,19 @@ public final class Services {
 
         final WorkerPool ioPool = workerPoolManager.getInstance(
                 config.getIOWorkerPoolConfiguration(),
-                metrics.health(),
+                metrics,
                 Requester.LINE_TCP_IO
         );
         final WorkerPool writerPool = workerPoolManager.getInstance(
                 config.getWriterWorkerPoolConfiguration(),
-                metrics.health(),
+                metrics,
                 Requester.LINE_TCP_WRITER
         );
         return new LineTcpReceiver(config, cairoEngine, ioPool, writerPool);
     }
 
     @Nullable
-    public static AbstractLineProtoUdpReceiver createLineUdpReceiver(
+    public AbstractLineProtoUdpReceiver createLineUdpReceiver(
             LineUdpReceiverConfiguration config,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager
@@ -173,7 +169,7 @@ public final class Services {
     }
 
     @Nullable
-    public static HttpServer createMinHttpServer(
+    public HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
@@ -189,14 +185,14 @@ public final class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics.health(),
+                metrics,
                 Requester.HTTP_MIN_SERVER
         );
         return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
     }
 
     @Nullable
-    public static HttpServer createMinHttpServer(
+    public HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
@@ -206,7 +202,7 @@ public final class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(configuration, cairoEngine.getMessageBus(), metrics, workerPool);
+        final HttpServer server = new HttpServer(configuration, metrics, workerPool, configuration.getFactoryProvider().getHttpMinSocketFactory());
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
@@ -219,6 +215,10 @@ public final class Services {
             }
         }, true);
         if (metrics.isEnabled()) {
+            final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
+                    configuration.getWorkerCount()
+            );
+            server.registerClosable(pool);
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
@@ -227,7 +227,7 @@ public final class Services {
 
                 @Override
                 public HttpRequestProcessor newInstance() {
-                    return new PrometheusMetricsProcessor(metrics, configuration);
+                    return new PrometheusMetricsProcessor(metrics, configuration, pool);
                 }
             });
         }
@@ -235,12 +235,10 @@ public final class Services {
     }
 
     @Nullable
-    public static PGWireServer createPGWireServer(
+    public PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent,
             Metrics metrics
     ) {
         if (!configuration.isEnabled()) {
@@ -252,7 +250,7 @@ public final class Services {
         // - SHARED otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
-                metrics.health(),
+                metrics,
                 Requester.PG_WIRE_SERVER
         );
 
@@ -262,8 +260,6 @@ public final class Services {
                 configuration,
                 cairoEngine,
                 workerPool,
-                functionFactoryCache,
-                snapshotAgent,
                 new PGWireServer.PGConnectionContextFactory(
                         cairoEngine,
                         configuration,

@@ -26,8 +26,13 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long128;
+import io.questdb.std.Long256;
+import io.questdb.std.Rows;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.wal.WalReader.getPrimaryColumnIndex;
 
@@ -121,6 +126,13 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
+    public int getIPv4(int col) {
+        final long offset = recordIndex * Integer.BYTES;
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return reader.getColumn(absoluteColumnIndex).getIPv4(offset);
+    }
+
+    @Override
     public int getInt(int col) {
         final long offset = recordIndex * Integer.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
@@ -149,7 +161,7 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         final long offset = recordIndex * Long256.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
         reader.getColumn(absoluteColumnIndex).getLong256(offset, sink);
@@ -240,8 +252,8 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public void toSink(CharSink sink) {
-        sink.put("WalReaderRecord [recordIndex=").put(recordIndex).put(']');
+    public void toSink(@NotNull CharSinkBase<?> sink) {
+        sink.putAscii("WalReaderRecord [recordIndex=").put(recordIndex).putAscii(']');
     }
 
     private long getDesignatedTimestamp(int col) {

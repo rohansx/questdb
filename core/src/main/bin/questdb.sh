@@ -24,21 +24,6 @@
 #
 ################################################################################
 
-export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
-export QDB_MAX_STOP_ATTEMPTS=60;
-export QDB_OS=`uname`
-
-case `uname` in
-   Darwin|FreeBSD)
-       export PS_CMD="ps aux"
-       export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
-       ;;
-   *)
-       export PS_CMD="ps -ef"
-       export QDB_DEFAULT_ROOT="$HOME/.questdb"
-       ;;
-esac
-
 function read_link {
     f=$(readlink $1)
     if [ "$f" != "" ]; then
@@ -55,6 +40,34 @@ function read_link {
     fi
     echo "$f"
 }
+
+LINK=$(read_link $0)
+if [ "$LINK" != "" ]; then
+    BASE=$(dirname ${LINK})
+else
+    BASE=$(dirname $0)
+fi
+
+source "$BASE/env.sh"
+
+export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
+export QDB_MAX_STOP_ATTEMPTS=60;
+export QDB_OS=`uname`
+
+case `uname` in
+   Darwin|FreeBSD)
+       export PS_CMD="ps aux"
+       if [ -d "/usr/local/var/questdb" ] || [ "$(id -u)" = "0" ]; then
+           export QDB_DEFAULT_ROOT="/usr/local/var/questdb"
+       else
+           export QDB_DEFAULT_ROOT="$HOME/.questdb"
+       fi
+       ;;
+   *)
+       export PS_CMD="ps -ef"
+       export QDB_DEFAULT_ROOT="$HOME/.questdb"
+       ;;
+esac
 
 function usage {
     echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag]"
@@ -150,13 +163,6 @@ function start {
         exit 55
     fi
 
-    LINK=$(read_link $0)
-    if [ "$LINK" != "" ]; then
-        BASE=$(dirname ${LINK})
-    else
-        BASE=$(dirname $0)
-    fi
-
     export_java
 
     # create root directory if it does not exist
@@ -177,6 +183,7 @@ function start {
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
+    ${JVM_PREPEND}
     "
 
     if [ "$(uname)" == "Darwin" ]; then
@@ -190,7 +197,6 @@ function start {
         "
     fi
 
-    JAVA_MAIN="io.questdb/io.questdb.ServerMain"
     DATE=`date +%Y-%m-%dT%H-%M-%S`
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
@@ -252,7 +258,7 @@ function banner {
     echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
     echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
     echo ' \__\_\\__,_|\___||___/\__|____/|____/'
-    echo '                        www.questdb.io'
+    echo -e "$QUESTDB_BANNER"
     echo
 }
 

@@ -29,7 +29,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
@@ -92,7 +91,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     public void toPlan(PlanSink sink) {
         sink.type("LatestBySubQuery");
         sink.child("Subquery", recordCursorFactory);
-        sink.child((Plannable) cursor);
+        sink.child(cursor);
         sink.child(dataFrameCursorFactory);
     }
 
@@ -110,6 +109,16 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
         private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
             this.delegate = delegate;
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (baseCursor != null) {
+                buildSymbolKeys();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.calculateSize(circuitBreaker, counter);
         }
 
         @Override
@@ -183,8 +192,13 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
-        public boolean skipTo(long rowCount) {
-            return delegate.skipTo(rowCount);
+        public void skipRows(Counter rowCount) {
+            if (baseCursor != null) {
+                buildSymbolKeys();
+                baseCursor = Misc.free(baseCursor);
+            }
+
+            delegate.skipRows(rowCount);
         }
 
         @Override

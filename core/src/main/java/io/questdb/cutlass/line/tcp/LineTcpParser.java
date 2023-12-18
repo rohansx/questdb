@@ -31,7 +31,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 
 public class LineTcpParser {
 
@@ -57,6 +58,13 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 20;
+    public static final byte ENTITY_UNIT_NONE = 0;
+    public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
+    public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
+    public static final byte ENTITY_UNIT_MILLI = ENTITY_UNIT_MICRO + 1;
+    public static final byte ENTITY_UNIT_SECOND = ENTITY_UNIT_MILLI + 1;
+    public static final byte ENTITY_UNIT_MINUTE = ENTITY_UNIT_SECOND + 1;
+    public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NaN;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_UUID + 1;
@@ -65,11 +73,13 @@ public class LineTcpParser {
     private static final byte ENTITY_HANDLER_TABLE = 0;
     private static final byte ENTITY_HANDLER_TIMESTAMP = 3;
     private static final byte ENTITY_HANDLER_VALUE = 2;
+
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
+
     private static final boolean[] controlChars;
-    private final DirectByteCharSequence charSeq = new DirectByteCharSequence();
+    private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
-    private final DirectByteCharSequence measurementName = new DirectByteCharSequence();
+    private final DirectUtf8String measurementName = new DirectUtf8String();
     private final boolean stringAsTagSupported;
     private final boolean symbolAsFieldSupported;
     private long bufAt;
@@ -87,6 +97,7 @@ public class LineTcpParser {
     private boolean tagStartsWithQuote;
     private boolean tagsComplete;
     private long timestamp;
+    private byte timestampUnit;
 
     public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
         this.stringAsTagSupported = stringAsTagSupported;
@@ -110,12 +121,34 @@ public class LineTcpParser {
         return errorCode;
     }
 
-    public DirectByteCharSequence getMeasurementName() {
+    public DirectUtf8Sequence getErrorFieldValue() {
+        if (currentEntity != null) {
+            return currentEntity.value;
+        }
+        return null;
+    }
+
+    public DirectUtf8Sequence getErrorTimestampValue() {
+        return charSeq;
+    }
+
+    public DirectUtf8Sequence getLastEntityName() {
+        if (currentEntity != null) {
+            return currentEntity.getName();
+        }
+        return null;
+    }
+
+    public DirectUtf8Sequence getMeasurementName() {
         return measurementName;
     }
 
     public long getTimestamp() {
         return timestamp;
+    }
+
+    public byte getTimestampUnit() {
+        return timestampUnit;
     }
 
     public boolean hasNonAsciiChars() {
@@ -221,7 +254,7 @@ public class LineTcpParser {
                     bufAt++;
                     b = Unsafe.getUnsafe().getByte(bufAt);
                     if (b == '\\' && (entityHandler != ENTITY_HANDLER_VALUE)) {
-                        return getError();
+                        return getError(bufHi);
                     }
                     hasNonAscii |= b < 0;
                     appendByte = true;
@@ -247,7 +280,7 @@ public class LineTcpParser {
                         bufAt += 1;
                         break;
                     } else if (isQuotedFieldValue) {
-                        return getError();
+                        return getError(bufHi);
                     } else if (entityLo == bufAt) {
                         tagStartsWithQuote = true;
                     }
@@ -259,11 +292,11 @@ public class LineTcpParser {
 
                 case '\0':
                     LOG.info().$("could not parse [byte=\\0]").$();
-                    return getError();
+                    return getError(bufHi);
                 case '/':
                     if (entityHandler != ENTITY_HANDLER_VALUE) {
                         LOG.info().$("could not parse [byte=/]").$();
-                        return getError();
+                        return getError(bufHi);
                     }
                     appendByte = true;
                     nextValueCanBeOpenQuote = false;
@@ -316,6 +349,7 @@ public class LineTcpParser {
         currentEntity = null;
         entityHandler = ENTITY_HANDLER_TABLE;
         timestamp = NULL_TIMESTAMP;
+        timestampUnit = ENTITY_UNIT_NONE;
         errorCode = ErrorCode.NONE;
         nQuoteCharacters = 0;
         scape = false;
@@ -351,14 +385,7 @@ public class LineTcpParser {
                 return false;
             }
 
-            if (entityCache.size() <= nEntities) {
-                currentEntity = new ProtoEntity();
-                entityCache.add(currentEntity);
-            } else {
-                currentEntity = entityCache.get(nEntities);
-                currentEntity.clear();
-            }
-
+            currentEntity = popEntity();
             nEntities++;
             currentEntity.setName();
             entityHandler = ENTITY_HANDLER_VALUE;
@@ -403,10 +430,16 @@ public class LineTcpParser {
             }
         }
 
+        // For error logging.
+        if (!emptyEntity) {
+            currentEntity = popEntity();
+            nEntities++;
+            currentEntity.setName();
+        }
         if (tagsComplete) {
-            errorCode = ErrorCode.INCOMPLETE_FIELD;
+            errorCode = ErrorCode.MISSING_FIELD_VALUE;
         } else {
-            errorCode = ErrorCode.INCOMPLETE_TAG;
+            errorCode = ErrorCode.MISSING_TAG_VALUE;
         }
         return false;
     }
@@ -414,7 +447,7 @@ public class LineTcpParser {
     private boolean expectEntityValue(byte endOfEntityByte) {
         boolean endOfSet = endOfEntityByte == (byte) ' ';
         if (endOfSet || endOfEntityByte == (byte) ',' || endOfEntityByte == (byte) '\n') {
-            if (currentEntity.setValue()) {
+            if (currentEntity.setValueAndUnit()) {
                 if (endOfSet) {
                     if (tagsComplete) {
                         entityHandler = ENTITY_HANDLER_TIMESTAMP;
@@ -455,9 +488,29 @@ public class LineTcpParser {
 
     private boolean expectTimestamp(byte endOfEntityByte) {
         try {
-            if (endOfEntityByte == (byte) '\n') {
-                if (entityLo < bufAt - nEscapedChars) {
-                    timestamp = Numbers.parseLong(charSeq.of(entityLo, bufAt - nEscapedChars));
+            if (endOfEntityByte == '\n') {
+                final long entityHi = bufAt - nEscapedChars;
+                if (entityLo < entityHi) {
+                    charSeq.of(entityLo, entityHi);
+                    final int charSeqLen = charSeq.size();
+                    final byte last = charSeq.byteAt(charSeqLen - 1);
+                    switch (last) {
+                        case 'n':
+                            timestampUnit = ENTITY_UNIT_NANO;
+                            timestamp = Numbers.parseLong(charSeq.decHi());
+                            break;
+                        case 't':
+                            timestampUnit = ENTITY_UNIT_MICRO;
+                            timestamp = Numbers.parseLong(charSeq.decHi());
+                            break;
+                        case 'm':
+                            timestampUnit = ENTITY_UNIT_MILLI;
+                            timestamp = Numbers.parseLong(charSeq.decHi());
+                            break;
+                        // fall through
+                        default:
+                            timestamp = Numbers.parseLong(charSeq);
+                    }
                 }
                 entityHandler = -1;
                 return true;
@@ -465,14 +518,21 @@ public class LineTcpParser {
             errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
             return false;
         } catch (NumericException ex) {
+            timestampUnit = ENTITY_UNIT_NONE;
             errorCode = ErrorCode.INVALID_TIMESTAMP;
             return false;
         }
     }
 
-    private ParseResult getError() {
+    private ParseResult getError(long bufHi) {
         switch (entityHandler) {
             case ENTITY_HANDLER_NAME:
+                // For error logging.
+                if (bufAt > entityLo && bufAt < bufHi) {
+                    currentEntity = popEntity();
+                    nEntities++;
+                    currentEntity.setName(Math.min(bufAt + 1, bufHi));
+                }
                 errorCode = ErrorCode.INVALID_COLUMN_NAME;
                 break;
             case ENTITY_HANDLER_TABLE:
@@ -483,6 +543,18 @@ public class LineTcpParser {
                 break;
         }
         return ParseResult.ERROR;
+    }
+
+    private ProtoEntity popEntity() {
+        ProtoEntity currentEntity;
+        if (entityCache.size() <= nEntities) {
+            currentEntity = new ProtoEntity();
+            entityCache.add(currentEntity);
+        } else {
+            currentEntity = entityCache.get(nEntities);
+            currentEntity.clear();
+        }
+        return currentEntity;
     }
 
     private boolean prepareQuotedEntity(long openQuoteIdx, long bufHi) {
@@ -547,6 +619,8 @@ public class LineTcpParser {
         INVALID_FIELD_VALUE_STR_UNDERFLOW,
         INVALID_TABLE_NAME,
         INVALID_COLUMN_NAME,
+        MISSING_FIELD_VALUE,
+        MISSING_TAG_VALUE,
         NONE
     }
 
@@ -555,12 +629,13 @@ public class LineTcpParser {
     }
 
     public class ProtoEntity {
-        private final DirectByteCharSequence name = new DirectByteCharSequence();
-        private final DirectByteCharSequence value = new DirectByteCharSequence();
+        private final DirectUtf8String name = new DirectUtf8String();
+        private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
         private byte type = ENTITY_TYPE_NONE;
+        private byte unit = ENTITY_UNIT_NONE;
 
         public boolean getBooleanValue() {
             return booleanValue;
@@ -574,7 +649,7 @@ public class LineTcpParser {
             return longValue;
         }
 
-        public DirectByteCharSequence getName() {
+        public DirectUtf8Sequence getName() {
             return name;
         }
 
@@ -582,7 +657,11 @@ public class LineTcpParser {
             return type;
         }
 
-        public DirectByteCharSequence getValue() {
+        public byte getUnit() {
+            return unit;
+        }
+
+        public DirectUtf8Sequence getValue() {
             return value;
         }
 
@@ -593,23 +672,38 @@ public class LineTcpParser {
 
         private void clear() {
             type = ENTITY_TYPE_NONE;
+            unit = ENTITY_UNIT_NONE;
         }
 
         private boolean parse(byte last, int valueLen) {
             switch (last) {
                 case 'i':
-                    if (valueLen > 1 && value.charAt(1) != 'x') {
+                    if (valueLen > 1 && value.byteAt(1) != 'x') {
                         return parseLong(ENTITY_TYPE_INTEGER);
                     }
-                    if (valueLen > 3 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
+                    if (valueLen > 3 && value.byteAt(0) == '0' && (value.byteAt(1) | 32) == 'x') {
                         value.decHi(); // remove 'i'
                         type = ENTITY_TYPE_LONG256;
                         return true;
                     }
                     type = ENTITY_TYPE_SYMBOL;
                     return true;
+                case 'n':
+                    if (valueLen > 1) {
+                        unit = ENTITY_UNIT_NANO;
+                        return parseLong(ENTITY_TYPE_TIMESTAMP);
+                    }
+                case 'm':
+                    if (valueLen > 1) {
+                        unit = ENTITY_UNIT_MILLI;
+                        return parseLong(ENTITY_TYPE_TIMESTAMP);
+                    }
+                    // fall through
+                    type = ENTITY_TYPE_SYMBOL;
+                    return true;
                 case 't':
                     if (valueLen > 1) {
+                        unit = ENTITY_UNIT_MICRO;
                         return parseLong(ENTITY_TYPE_TIMESTAMP);
                     }
                     // fall through
@@ -626,13 +720,13 @@ public class LineTcpParser {
                     // fals(e)
                     if (valueLen == 1) {
                         if (last != 'e') {
-                            booleanValue = (last | 32) == 't';
+                            booleanValue = ((last | 32) == 't');
                             type = ENTITY_TYPE_BOOLEAN;
                         } else {
                             type = ENTITY_TYPE_SYMBOL;
                         }
                     } else {
-                        charSeq.of(value.getLo(), value.getHi());
+                        charSeq.of(value.lo(), value.hi());
                         if (SqlKeywords.isTrueKeyword(charSeq)) {
                             booleanValue = true;
                             type = ENTITY_TYPE_BOOLEAN;
@@ -654,9 +748,10 @@ public class LineTcpParser {
                     type = ENTITY_TYPE_SYMBOL;
                     return true;
                 }
+                // fall through
                 default:
                     try {
-                        floatValue = Numbers.parseDouble(value.getLo(), value.length());
+                        floatValue = Numbers.parseDouble(value.lo(), value.size());
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
                         type = ENTITY_TYPE_SYMBOL;
@@ -667,11 +762,12 @@ public class LineTcpParser {
 
         private boolean parseLong(byte entityType) {
             try {
-                charSeq.of(value.getLo(), value.getHi() - 1);
+                charSeq.of(value.lo(), value.hi() - 1);
                 longValue = Numbers.parseLong(charSeq);
-                value.decHi(); // remove 'i'
+                value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
                 type = entityType;
             } catch (NumericException notANumber) {
+                unit = ENTITY_UNIT_NONE;
                 type = ENTITY_TYPE_SYMBOL;
             }
             return true;
@@ -681,7 +777,11 @@ public class LineTcpParser {
             name.of(entityLo, bufAt - nEscapedChars);
         }
 
-        private boolean setValue() {
+        private void setName(long hi) {
+            name.of(entityLo, hi - nEscapedChars);
+        }
+
+        private boolean setValueAndUnit() {
             assert type == ENTITY_TYPE_NONE;
             long bufHi = bufAt - nEscapedChars;
             int valueLen = (int) (bufHi - entityLo);

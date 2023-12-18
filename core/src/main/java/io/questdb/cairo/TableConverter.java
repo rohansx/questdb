@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -34,7 +33,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+
+import java.util.function.Predicate;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
@@ -42,7 +44,11 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 public class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
 
-    public static ObjList<TableToken> convertTables(CairoConfiguration configuration, TableSequencerAPI tableSequencerAPI) {
+    public static ObjList<TableToken> convertTables(
+            CairoConfiguration configuration,
+            TableSequencerAPI tableSequencerAPI,
+            Predicate<CharSequence> protectedTableResolver
+    ) {
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
             LOG.info().$("Table type conversion is disabled").$();
@@ -54,55 +60,77 @@ public class TableConverter {
         }
 
         final Path path = Path.getThreadLocal(configuration.getRoot());
-        final int rootLen = path.length();
-        final StringSink sink = Misc.getThreadLocalBuilder();
+        final int rootLen = path.size();
+        final Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
         final FilesFacade ff = configuration.getFilesFacade();
         final long findPtr = ff.findFirst(path.$());
+        TxWriter txWriter = null;
         try {
             do {
-                if (ff.isDirOrSoftLinkDirNoDots(path, rootLen, ff.findName(findPtr), ff.findType(findPtr), sink)) {
+                if (ff.isDirOrSoftLinkDirNoDots(path, rootLen, ff.findName(findPtr), ff.findType(findPtr), dirNameSink)) {
                     if (!ff.exists(path.concat(WalUtils.CONVERT_FILE_NAME).$())) {
                         continue;
                     }
                     try {
-                        final String dirName = sink.toString();
                         final boolean walEnabled = readWalEnabled(path, ff);
-                        LOG.info().$("Converting table [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
+                        LOG.info().$("Converting table [dirName=").$(dirNameSink)
+                                .$(", walEnabled=").$(walEnabled)
+                                .I$();
 
-                        path.trimTo(rootLen).concat(dirName);
+                        path.trimTo(rootLen).concat(dirNameSink);
                         try (final MemoryMARW metaMem = Vm.getMARWInstance()) {
                             openSmallFile(ff, path, rootLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
                             if (metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED) == walEnabled) {
-                                LOG.info().$("Skipping conversion, table already has the expected type [dirName=").utf8(dirName).$(", walEnabled=").$(walEnabled).I$();
+                                LOG.info().$("Skipping conversion, table already has the expected type [dirName=").$(dirNameSink)
+                                        .$(", walEnabled=").$(walEnabled)
+                                        .I$();
                             } else {
+                                final String dirName = dirNameSink.toString();
                                 final String tableName;
                                 try (final MemoryCMR mem = Vm.getCMRInstance()) {
-                                    final String name = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirName), rootLen, mem, ff);
+                                    final String name = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirNameSink), rootLen, mem, ff);
                                     tableName = name != null ? name : dirName;
                                 }
 
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled);
+                                boolean isProtected = protectedTableResolver.test(tableName);
+                                boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected);
+
+                                if (txWriter == null) {
+                                    txWriter = new TxWriter(ff, configuration);
+                                }
+                                txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$(), PartitionBy.DAY);
+                                txWriter.resetLagValuesUnsafe();
 
                                 if (walEnabled) {
                                     try (TableWriterMetadata metadata = new TableWriterMetadata(token, metaMem)) {
                                         tableSequencerAPI.registerTable(tableId, metadata, token);
                                     }
+
+                                    // Reset structure version in _meta and _txn files
+                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                                    path.trimTo(rootLen).concat(dirNameSink);
+                                    txWriter.resetStructureVersionUnsafe();
                                 } else {
                                     tableSequencerAPI.deregisterTable(token);
-                                    removeWalPersistence(path, rootLen, ff, dirName);
+                                    removeWalPersistence(path, rootLen, ff, dirNameSink);
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
                             }
 
-                            path.trimTo(rootLen).concat(dirName).concat(CONVERT_FILE_NAME).$();
+                            path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME).$();
                             if (!ff.remove(path)) {
-                                LOG.error().$("Could not remove _convert file [path=").utf8(path).I$();
+                                LOG.error().$("Could not remove _convert file [path=").$(path).I$();
                             }
                         }
                     } catch (Exception e) {
-                        LOG.error().$("Table conversion failed [path=").utf8(path).$(", e=").$(e).I$();
+                        LOG.error().$("Table conversion failed [path=").$(path).$(", e=").$(e).I$();
+                    } finally {
+                        if (txWriter != null) {
+                            txWriter.close();
+                        }
                     }
                 }
             } while (ff.findNext(findPtr) > 0);
@@ -134,9 +162,9 @@ public class TableConverter {
         }
     }
 
-    private static void removeWalPersistence(Path path, int rootLen, FilesFacade ff, String dirName) {
+    private static void removeWalPersistence(Path path, int rootLen, FilesFacade ff, Utf8Sequence dirName) {
         path.trimTo(rootLen).concat(dirName).concat(WalUtils.SEQ_DIR).$();
-        if (ff.rmdir(path) != 0) {
+        if (!ff.rmdir(path)) {
             LOG.error()
                     .$("Could not remove sequencer dir [errno=").$(ff.errno())
                     .$(", path=").$(path)
@@ -144,7 +172,7 @@ public class TableConverter {
         }
 
         path.trimTo(rootLen).concat(dirName).$();
-        int plen = path.length();
+        int plen = path.size();
         final long pFind = ff.findFirst(path);
         if (pFind > 0) {
             try {
@@ -161,7 +189,7 @@ public class TableConverter {
                                         .I$();
                             }
                         } else {
-                            if (ff.rmdir(path) != 0) {
+                            if (!ff.rmdir(path)) {
                                 LOG.error()
                                         .$("Could not remove wal dir [errno=").$(ff.errno())
                                         .$(", path=").$(path)

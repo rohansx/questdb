@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 public abstract class StrArrayFunction implements Function {
     @Override
@@ -95,6 +95,11 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -115,7 +120,7 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public final void getLong256(Record rec, CharSink sink) {
+    public final void getLong256(Record rec, CharSinkBase<?> sink) {
         throw new UnsupportedOperationException();
     }
 

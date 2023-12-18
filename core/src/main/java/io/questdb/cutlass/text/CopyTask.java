@@ -25,6 +25,7 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -35,10 +36,7 @@ import io.questdb.griffin.engine.functions.columns.ColumnUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.DirectCharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -401,7 +399,6 @@ public class CopyTask {
             int fd = TableUtils.openRO(ff, path, LOG);
             ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);
             try {
-
                 do {
                     long leftToRead = Math.min(chunkEnd - offset, fileBufSize);
                     read = (int) ff.read(fd, fileBufPtr, leftToRead, offset);
@@ -480,17 +477,20 @@ public class CopyTask {
             tableNameSink.clear();
             tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
             String tableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);
+            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false, false, false);
 
             final int columnCount = metadata.getColumnCount();
             try (
-                    TableWriter w = new TableWriter(configuration,
+                    TableWriter w = new TableWriter(
+                            configuration,
                             tableToken,
                             cairoEngine.getMessageBus(),
                             null,
                             true,
                             DefaultLifecycleManager.INSTANCE,
                             root,
+                            cairoEngine.getDdlListener(tableToken),
+                            NoOpDatabaseSnapshotAgent.INSTANCE,
                             cairoEngine.getMetrics()
                     )
             ) {
@@ -551,11 +551,11 @@ public class CopyTask {
         public void run(Path path) {
             final FilesFacade ff = cfg.getFilesFacade();
             path.of(importRoot).concat(tableToken.getTableName());
-            int plen = path.length();
+            int plen = path.size();
             for (int i = 0; i < tmpTableCount; i++) {
                 path.trimTo(plen);
-                path.put('_').put(i);
-                int tableLen = path.length();
+                path.putAscii('_').put(i);
+                int tableLen = path.size();
                 try (TxReader txFile = new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy)) {
                     path.trimTo(tableLen);
                     txFile.unsafeLoadAll();
@@ -605,14 +605,15 @@ public class CopyTask {
             this.symbolCount = -1;
         }
 
-        public void of(CairoEngine cairoEngine,
-                       TableStructure tableStructure,
-                       int index,
-                       long partitionSize,
-                       long partitionTimestamp,
-                       CharSequence root,
-                       CharSequence columnName,
-                       int symbolCount
+        public void of(
+                CairoEngine cairoEngine,
+                TableStructure tableStructure,
+                int index,
+                long partitionSize,
+                long partitionTimestamp,
+                CharSequence root,
+                CharSequence columnName,
+                int symbolCount
         ) {
             this.cairoEngine = cairoEngine;
             this.tableStructure = tableStructure;
@@ -629,7 +630,7 @@ public class CopyTask {
 
             TableToken tableToken = cairoEngine.verifyTableName(tableStructure.getTableName());
             path.of(root).concat(tableToken.getTableName()).put('_').put(index);
-            int plen = path.length();
+            int plen = path.size();
             TableUtils.setPathForPartition(path.slash(), tableStructure.getPartitionBy(), partitionTimestamp, -1);
             path.concat(columnName).put(TableUtils.FILE_SUFFIX_D);
 
@@ -716,18 +717,19 @@ public class CopyTask {
             return partitionKeysAndSizes;
         }
 
-        public void of(long chunkStart,
-                       long chunkEnd,
-                       long lineNumber,
-                       int index,
-                       CharSequence inputFileName,
-                       CharSequence importRoot,
-                       int partitionBy,
-                       byte columnDelimiter,
-                       int timestampIndex,
-                       TimestampAdapter adapter,
-                       boolean ignoreHeader,
-                       int atomicity
+        public void of(
+                long chunkStart,
+                long chunkEnd,
+                long lineNumber,
+                int index,
+                CharSequence inputFileName,
+                CharSequence importRoot,
+                int partitionBy,
+                byte columnDelimiter,
+                int timestampIndex,
+                TimestampAdapter adapter,
+                boolean ignoreHeader,
+                int atomicity
         ) {
             assert chunkStart >= 0 && chunkEnd > chunkStart;
             assert lineNumber >= 0;
@@ -781,8 +783,8 @@ public class CopyTask {
         private final LongList offsets = new LongList();
         private final StringSink tableNameSink = new StringSink();
         private int atomicity;
-        private CairoEngine cairoEngine;
         private byte columnDelimiter;
+        private CairoEngine engine;
         private long errors;
         private int hi;
         private CharSequence importRoot;
@@ -802,7 +804,7 @@ public class CopyTask {
         private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
-            this.cairoEngine = null;
+            this.engine = null;
             this.targetTableStructure = null;
             this.types = null;
             this.atomicity = -1;
@@ -852,25 +854,28 @@ public class CopyTask {
 
             this.utf8Sink = utf8Sink;
 
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
             tableNameSink.clear();
             tableNameSink.put(targetTableStructure.getTableName()).put('_').put(index);
             String publicTableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false);
-            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0);
+            TableToken tableToken = new TableToken(publicTableName, publicTableName, (int) engine.getTableIdGenerator().getNextId(), false, false, false);
+            createTable(ff, configuration.getMkDirMode(), importRoot, tableToken.getDirName(), publicTableName, targetTableStructure, 0, AllowAllSecurityContext.INSTANCE);
 
             try (
                     TableWriter writer = new TableWriter(
                             configuration,
                             tableToken,
-                            cairoEngine.getMessageBus(),
+                            engine.getMessageBus(),
                             null,
                             true,
                             DefaultLifecycleManager.INSTANCE,
                             importRoot,
-                            cairoEngine.getMetrics())
+                            engine.getDdlListener(tableToken),
+                            NoOpDatabaseSnapshotAgent.INSTANCE,
+                            engine.getMetrics()
+                    )
             ) {
                 tableWriterRef = writer;
                 AbstractTextLexer lexer = lf.getLexer(columnDelimiter);
@@ -964,15 +969,15 @@ public class CopyTask {
             }
         }
 
-        private TableWriter.Row getRow(DirectByteCharSequence dbcs, long offset) {
+        private TableWriter.Row getRow(DirectUtf8Sequence dus, long offset) {
             final long timestamp;
             try {
-                timestamp = timestampAdapter.getTimestamp(dbcs);
+                timestamp = timestampAdapter.getTimestamp(dus);
             } catch (Throwable e) {
                 if (atomicity == Atomicity.SKIP_ALL) {
                     throw TextException.$("could not parse timestamp [offset=").put(offset).put(", msg=").put(e.getMessage()).put(']');
                 } else {
-                    logError(offset, timestampIndex, dbcs);
+                    logError(offset, timestampIndex, dus);
                     return null;
                 }
             }
@@ -1024,7 +1029,7 @@ public class CopyTask {
                 DirectCharSink utf8Sink,
                 Path tmpPath
         ) {
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
             offsets.clear();
@@ -1093,8 +1098,8 @@ public class CopyTask {
                             long nextOffset = nextLengthAndOffset & MASK;
 
                             // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
-                            long diff = nextOffset - offset - bytesToRead;
-                            long nextBytesToRead = diff + nextLineLength;
+                            int diff = ((int) (nextOffset - offset)) - bytesToRead;
+                            int nextBytesToRead = diff + nextLineLength;
                             if (diff > -1 && diff < 2 && addr + bytesToRead + nextBytesToRead <= lim) {
                                 bytesToRead += nextBytesToRead;
                                 additionalLines++;
@@ -1137,7 +1142,7 @@ public class CopyTask {
                 DirectCharSink utf8Sink,
                 Path tmpPath
         ) {
-            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+            final CairoConfiguration configuration = engine.getConfiguration();
             final FilesFacade ff = configuration.getFilesFacade();
 
             lexer.setupBeforeExactLines(onFieldsPartitioned);
@@ -1178,8 +1183,8 @@ public class CopyTask {
                         long nextOffset = nextLengthAndOffset & MASK;
 
                         // line indexing stops on first EOL char, e.g. \r, but it could be followed by \n
-                        long diff = nextOffset - offset - bytesToRead;
-                        long nextBytesToRead = diff + nextLineLength;
+                        int diff = ((int) (nextOffset - offset)) - bytesToRead;
+                        int nextBytesToRead = diff + nextLineLength;
                         if (diff > -1 && diff < 2 && bytesToRead + nextBytesToRead <= fileBufSize) {
                             bytesToRead += diff + nextLineLength;
                             additionalLines++;
@@ -1214,12 +1219,12 @@ public class CopyTask {
             }
         }
 
-        private void logError(long offset, int column, final DirectByteCharSequence dbcs) {
+        private void logError(long offset, int column, final DirectUtf8Sequence dus) {
             LOG.error()
                     .$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(column).getType()))
                     .$(", offset=").$(offset)
                     .$(", column=").$(column)
-                    .$(", value='").$(dbcs)
+                    .$(", value='").$(dus)
                     .$("']").$();
         }
 
@@ -1237,7 +1242,7 @@ public class CopyTask {
         ) throws TextException {
             unmergedIndexes.clear();
             partitionPath.slash$();
-            int partitionLen = partitionPath.length();
+            int partitionLen = partitionPath.size();
 
             long mergedIndexSize = -1;
             long mergeIndexAddr = 0;
@@ -1289,16 +1294,16 @@ public class CopyTask {
 
         private boolean onField(
                 long offset,
-                final DirectByteCharSequence dbcs,
+                final DirectUtf8Sequence dus,
                 TableWriter.Row w,
                 int fieldIndex
         ) throws TextException {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
-                type.write(w, fieldIndex, dbcs, utf8Sink);
+                type.write(w, fieldIndex, dus, utf8Sink);
             } catch (NumericException | Utf8Exception | ImplicitCastException ignore) {
                 errors++;
-                logError(offset, fieldIndex, dbcs);
+                logError(offset, fieldIndex, dus);
                 switch (atomicity) {
                     case Atomicity.SKIP_ALL:
                         tableWriterRef.rollback();
@@ -1315,19 +1320,19 @@ public class CopyTask {
             return false;
         }
 
-        private void onFieldsPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+        private void onFieldsPartitioned(long line, ObjList<DirectUtf8String> values, int valuesLength) {
             assert tableWriterRef != null;
-            DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
-            final TableWriter.Row w = getRow(dbcs, offset);
+            DirectUtf8Sequence dus = values.getQuick(timestampIndex);
+            final TableWriter.Row w = getRow(dus, offset);
             if (w == null) {
                 return;
             }
             for (int i = 0; i < valuesLength; i++) {
-                dbcs = values.getQuick(i);
-                if (i == timestampIndex || dbcs.length() == 0) {
+                dus = values.getQuick(i);
+                if (i == timestampIndex || dus.size() == 0) {
                     continue;
                 }
-                if (onField(offset, dbcs, w, i)) return;
+                if (onField(offset, dus, w, i)) return;
             }
             w.append();
         }
@@ -1403,7 +1408,7 @@ public class CopyTask {
                 int hi,
                 final ObjList<ParallelCsvFileImporter.PartitionInfo> partitions
         ) {
-            this.cairoEngine = cairoEngine;
+            this.engine = cairoEngine;
             this.targetTableStructure = targetTableStructure;
             this.types = types;
             this.atomicity = atomicity;

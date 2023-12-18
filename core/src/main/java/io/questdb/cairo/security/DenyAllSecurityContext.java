@@ -25,20 +25,43 @@
 package io.questdb.cairo.security;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     public static final DenyAllSecurityContext INSTANCE = new DenyAllSecurityContext();
 
+    protected DenyAllSecurityContext() {
+    }
+
     @Override
-    public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
+    public void authorizeAdminAction() {
         throw CairoException.nonCritical().put("permission denied");
     }
 
     @Override
-    public void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    public void authorizeHttp() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeLineTcp() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizePGWire() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeSelectOnAnyColumn(TableToken tableToken) {
         throw CairoException.nonCritical().put("permission denied");
     }
 }

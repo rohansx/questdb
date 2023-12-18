@@ -24,39 +24,41 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.processors.*;
-import io.questdb.griffin.DatabaseSnapshotAgent;
-import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.FanOut;
 import io.questdb.mp.Job;
-import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.IOContextFactoryImpl;
-import io.questdb.network.IODispatcher;
-import io.questdb.network.IODispatchers;
-import io.questdb.network.IORequestProcessor;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.network.*;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 
 public class HttpServer implements Closeable {
 
-    private static final Log LOG = LogFactory.getLog(HttpServer.class);
+    private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
 
-    public HttpServer(HttpMinServerConfiguration configuration, MessageBus messageBus, Metrics metrics, WorkerPool pool) {
+    public HttpServer(
+            HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
+            SocketFactory socketFactory
+    ) {
+        this(configuration, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
+    }
+
+    public HttpServer(
+            HttpMinServerConfiguration configuration, Metrics metrics, WorkerPool pool,
+            SocketFactory socketFactory, HttpCookieHandler cookieHandler, HttpHeaderParserFactory headerParserFactory
+    ) {
         this.workerCount = pool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
@@ -64,21 +66,14 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration.getHttpContextConfiguration(), metrics);
-        this.dispatcher = IODispatchers.create(
-                configuration.getDispatcherConfiguration(),
-                httpContextFactory
-        );
+        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler, headerParserFactory);
+        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration());
         pool.assign(this.rescheduleContext);
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
-
-            final SCSequence queryCacheEventSubSeq = new SCSequence();
-            final FanOut queryCacheEventFanOut = messageBus.getQueryCacheEventFanOut();
-            queryCacheEventFanOut.and(queryCacheEventSubSeq);
 
             pool.assign(i, new Job() {
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
@@ -87,35 +82,15 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    long seq = queryCacheEventSubSeq.next();
-                    if (seq > -1) {
-                        // Queue is not empty, so flush query cache.
-                        LOG.info().$("flushing HTTP server query cache [worker=").$(workerId).$(']').$();
-                        QueryCache queryCache = QueryCache.getWeakThreadLocalInstance();
-                        if (queryCache != null) {
-                            queryCache.clear();
-                        }
-                        queryCacheEventSubSeq.done(seq);
-                    }
-
                     boolean useful = dispatcher.processIOQueue(processor);
                     useful |= rescheduleContext.runReruns(selector);
-
                     return useful;
                 }
             });
 
             // http context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
-            pool.assignThreadLocalCleaner(i, () -> {
-                httpContextFactory.freeThreadLocal();
-                Misc.free(QueryCache.getWeakThreadLocalInstance());
-            });
-
-            pool.freeOnExit(() -> {
-                messageBus.getQueryCacheEventFanOut().remove(queryCacheEventSubSeq);
-                queryCacheEventSubSeq.clear();
-            });
+            pool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
         }
     }
 
@@ -126,9 +101,51 @@ public class HttpServer implements Closeable {
             WorkerPool workerPool,
             int sharedWorkerCount,
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
-            FunctionFactoryCache functionFactoryCache,
-            DatabaseSnapshotAgent snapshotAgent
+            HttpRequestProcessorBuilder ilpWriteProcessorBuilderV2
     ) {
+        // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
+        if (configuration.getLineHttpProcessorConfiguration().isEnabled() &&
+                !configuration.getHttpContextConfiguration().readOnlySecurityContext()) {
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/write";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return ilpWriteProcessorBuilderV2.newInstance();
+                }
+            });
+
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/api/v2/write";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return ilpWriteProcessorBuilderV2.newInstance();
+                }
+            });
+
+            LineHttpPingProcessor pingProcessor = new LineHttpPingProcessor(
+                    configuration.getLineHttpProcessorConfiguration().getInfluxPingVersion()
+            );
+            server.bind(new HttpRequestProcessorFactory() {
+                @Override
+                public String getUrl() {
+                    return "/ping";
+                }
+
+                @Override
+                public HttpRequestProcessor newInstance() {
+                    return pingProcessor;
+                }
+            });
+        }
+
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
@@ -165,9 +182,7 @@ public class HttpServer implements Closeable {
                         configuration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         workerPool.getWorkerCount(),
-                        sharedWorkerCount,
-                        functionFactoryCache,
-                        snapshotAgent
+                        sharedWorkerCount
                 );
             }
         });
@@ -210,7 +225,7 @@ public class HttpServer implements Closeable {
                 selector.defaultRequestProcessor = factory.newInstance();
             } else {
                 final HttpRequestProcessor processor = factory.newInstance();
-                selector.processorMap.put(url, processor);
+                selector.processorMap.put(new Utf8String(url), processor);
                 if (useAsDefault) {
                     selector.defaultRequestProcessor = processor;
                 }
@@ -223,7 +238,12 @@ public class HttpServer implements Closeable {
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
         Misc.freeObjListAndClear(selectors);
+        Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
+    }
+
+    public void registerClosable(Closeable closeable) {
+        closeables.add(closeable);
     }
 
     @FunctionalInterface
@@ -232,20 +252,23 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
-        public HttpContextFactory(HttpContextConfiguration configuration, Metrics metrics) {
-            super(() -> new HttpConnectionContext(configuration, metrics), configuration.getConnectionPoolInitialCapacity());
+        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler, HttpHeaderParserFactory headerParserFactory) {
+            super(
+                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler, headerParserFactory),
+                    configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
+            );
         }
     }
 
     private static class HttpRequestProcessorSelectorImpl implements HttpRequestProcessorSelector {
 
-        private final CharSequenceObjHashMap<HttpRequestProcessor> processorMap = new CharSequenceObjHashMap<>();
+        private final Utf8SequenceObjHashMap<HttpRequestProcessor> processorMap = new Utf8SequenceObjHashMap<>();
         private HttpRequestProcessor defaultRequestProcessor = null;
 
         @Override
         public void close() {
             Misc.freeIfCloseable(defaultRequestProcessor);
-            ObjList<CharSequence> processorKeys = processorMap.keys();
+            ObjList<Utf8String> processorKeys = processorMap.keys();
             for (int i = 0, n = processorKeys.size(); i < n; i++) {
                 Misc.freeIfCloseable(processorMap.get(processorKeys.getQuick(i)));
             }
@@ -257,7 +280,7 @@ public class HttpServer implements Closeable {
         }
 
         @Override
-        public HttpRequestProcessor select(CharSequence url) {
+        public HttpRequestProcessor select(Utf8Sequence url) {
             return processorMap.get(url);
         }
     }

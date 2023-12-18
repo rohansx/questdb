@@ -24,34 +24,45 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
+public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAnalyticQueryOrderedByColumnNotOnSelectList() throws Exception {
+    public void testCachedWindowQueryOrderedByColumnNotOnSelectList() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y (a int, b int)", sqlExecutionContext);
-            compiler.compile("insert into y select x/4, x from long_sequence(10)", sqlExecutionContext);
+            ddl("create table y (a int, b int)");
+            insert("insert into y select x/4, x from long_sequence(10)");
             engine.releaseAllWriters();
 
             String query = "select b.a, row_number() OVER (PARTITION BY b.a ORDER BY b.b desc) as b " +
                     " from y b " +
                     "order by b.b";
 
+            assertPlan(query,
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [b1]\n" +
+                            "        CachedWindow\n" +
+                            "          orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]\n" +
+                            "            SelectedRecord\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: y\n");
+
             assertQuery(
                     "a\tb\n" +
-                            "2\t1\n" +
-                            "1\t1\n" +
-                            "0\t1\n" +
-                            "2\t2\n" +
-                            "1\t2\n" +
-                            "0\t2\n" +
-                            "2\t3\n" +
-                            "1\t3\n" +
                             "0\t3\n" +
-                            "1\t4\n",
+                            "0\t2\n" +
+                            "0\t1\n" +
+                            "1\t4\n" +
+                            "1\t3\n" +
+                            "1\t2\n" +
+                            "1\t1\n" +
+                            "2\t3\n" +
+                            "2\t2\n" +
+                            "2\t1\n",
                     query,
                     null,
                     true,
@@ -139,7 +150,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 "WHERE A_ATTNUM = (result.KEYS).x  \n" +
                 "ORDER BY result.table_name, result.PK_NAME, result.KEY_SEQ;";
 
-        assertQuery9(
+        assertQuery(
                 "TABLE_CAT\tTABLE_SCHEM\tTABLE_NAME\tCOLUMN_NAME\tKEY_SEQ\tPK_NAME\n",
                 query,
                 "create table x(a int)",
@@ -197,7 +208,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testKafkaQuery3() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)", sqlExecutionContext);
+            ddl("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
             assertQuery(
@@ -260,7 +271,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
     @Test
     public void testKafkaQuery31() throws Exception {
         assertMemoryLeak(() -> {
-            compiler.compile("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)", sqlExecutionContext);
+            ddl("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
             assertQuery(
@@ -318,7 +329,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgAttributeFunc() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
                         "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
                 "pg_catalog.pg_attribute;",
@@ -330,7 +341,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgAttributeFuncNoPrefix() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
                 "pg_attribute;",
                 null,
@@ -341,7 +352,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgAttributeFuncNoTables() throws Exception {
-        assertQuery9(
+        assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
                 "pg_catalog.pg_attribute;",
                 null,
@@ -352,36 +363,18 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
 
     @Test
     public void testPgAttributeFuncWith2Tables() throws Exception {
-        assertQuery13(
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
-                "pg_catalog.pg_attribute order by 1;",
-                "create table x(a int)",
-                null,
-                "create table y(a double, b string)",
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n" +
-                        "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\ttrue\n" +
-                        "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\ttrue\n",
-                true,
-                false
-        );
+        assertQuery("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n" +
+                "2\ta\t1\t701\tfalse\t0\t8\t\tfalse\ttrue\n" +
+                "2\tb\t2\t1043\tfalse\t0\t-1\t\tfalse\ttrue\n", true, false, false);
     }
 
     @Test
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
-        assertQuery13(
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
-                "pg_catalog.pg_attribute order by 1 limit 1;",
-                "create table x(a int)",
-                null,
-                "create table y(a double, b string)",
-                "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                        "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n",
-                true,
-                false
-        );
+        assertQuery("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                "1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\n", true, false, false);
     }
 
     @Test
@@ -418,7 +411,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractGriffinTest {
                 "WHERE true  \n" +
                 "ORDER BY nspname,c.relname --,attnum";
 
-        assertQuery9(
+        assertQuery(
                 "nspname\trelname\tattname\tatttypid\tattnotnull\tatttypmod\tattlen\ttyptypmod\tattidentity\tadsrc\tdescription\ttypbasetype\ttyptype\n" +
                         "public\tx\ta\t23\tfalse\t0\t4\t0\t\t\t\t0\tb\n",
                 query,

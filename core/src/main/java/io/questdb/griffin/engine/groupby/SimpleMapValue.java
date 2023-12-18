@@ -86,11 +86,6 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
-    public long getAddress() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean getBool(int index) {
         return values[4 * index] == 0;
     }
@@ -141,6 +136,11 @@ public class SimpleMapValue implements MapValue {
     }
 
     @Override
+    public int getIPv4(int index) {
+        return (int) values[4 * index];
+    }
+
+    @Override
     public int getInt(int index) {
         return (int) values[4 * index];
     }
@@ -170,6 +170,11 @@ public class SimpleMapValue implements MapValue {
     @Override
     public short getShort(int index) {
         return (short) values[4 * index];
+    }
+
+    @Override
+    public long getStartAddress() {
+        throw new UnsupportedOperationException();
     }
 
     @Override

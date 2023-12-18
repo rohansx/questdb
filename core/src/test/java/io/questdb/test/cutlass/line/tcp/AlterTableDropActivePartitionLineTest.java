@@ -50,6 +50,7 @@ import org.junit.Test;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.time.temporal.ChronoUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -208,13 +209,13 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 // check size
                 try (
                         SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine);
-                        SqlCompiler compiler = new SqlCompiler(engine)
+                        SqlCompiler compiler = engine.getSqlCompiler()
                 ) {
                     TestUtils.assertSql(
                             compiler,
                             context,
                             "SELECT min(timestamp), max(timestamp), count() FROM " + tableName + " WHERE timestamp IN '" + activePartitionName + "'",
-                            Misc.getThreadLocalBuilder(),
+                            Misc.getThreadLocalSink(),
                             "min\tmax\tcount\n" +
                                     "\t\t0\n"
                     );
@@ -235,7 +236,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                 .field("quantity", rnd.nextPositiveInt())
                 .field("ppu", rnd.nextFloat())
                 .field("addressId", rnd.nextString(50))
-                .at(timestampNano.getAndAdd(1L + rnd.nextLong(100_000L)));
+                .at(timestampNano.getAndAdd(1L + rnd.nextLong(100_000L)), ChronoUnit.NANOS);
         return sender;
     }
 }

@@ -26,7 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
@@ -150,6 +150,15 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
+    public int getIPv4(int columnIndex) {
+        final int col = deferenceColumn(columnIndex);
+        final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
+        final long offset = getAdjustedRecordIndex(col) * Integer.BYTES;
+        final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
+        return reader.getColumn(absoluteColumnIndex).getIPv4(offset);
+    }
+
+    @Override
     public int getInt(int columnIndex) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
@@ -186,7 +195,7 @@ public class TableReaderSelectedColumnRecord implements Record {
     }
 
     @Override
-    public void getLong256(int columnIndex, CharSink sink) {
+    public void getLong256(int columnIndex, CharSinkBase<?> sink) {
         final int col = deferenceColumn(columnIndex);
         final int index = TableReader.getPrimaryColumnIndex(columnBase, col);
         final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
@@ -210,6 +219,11 @@ public class TableReaderSelectedColumnRecord implements Record {
         final long offset = getAdjustedRecordIndex(col) * Long256.BYTES;
         final int absoluteColumnIndex = ifOffsetNegThen0ElseValue(offset, index);
         return reader.getColumn(absoluteColumnIndex).getLong256B(offset);
+    }
+
+    @Override
+    public long getLongIPv4(int columnIndex) {
+        return Numbers.ipv4ToLong(getIPv4(columnIndex));
     }
 
     @Override

@@ -30,14 +30,13 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -64,24 +63,15 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     }
 
     static void assertNumOfRows(CairoEngine engine, String tableName, int count) throws SqlException {
-        try (
-                final SqlExecutionContext context = createSqlExecutionContext(engine);
-                final SqlCompiler compiler = new SqlCompiler(engine)
-        ) {
+        try (SqlExecutionContext context = createSqlExecutionContext(engine)) {
             TestUtils.assertSql(
-                    compiler,
+                    engine,
                     context,
                     "SELECT count() FROM " + tableName,
-                    Misc.getThreadLocalBuilder(),
+                    Misc.getThreadLocalSink(),
                     "count\n" +
                             count + "\n"
             );
-        }
-    }
-
-    static void setSeqTxn(CairoEngine engine, TableToken token) {
-        try (final TableWriter writer = TestUtils.getWriter(engine, token)) {
-            writer.commitSeqTxn(12345);
         }
     }
 
@@ -89,42 +79,6 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         try (final TableReader reader = engine.getReader(token)) {
             assertEquals(expectedSeqTxn, reader.getTxFile().getSeqTxn());
         }
-    }
-
-    static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                AllowAllSecurityContext.INSTANCE,
-                null,
-                null,
-                -1,
-                null
-        );
-    }
-
-    static void createTable(String tableName, String walMode) throws SQLException {
-        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts) PARTITION BY DAY " + walMode);
-        LOG.info().$("created table: ").utf8(tableName).$();
-    }
-
-    static void createNonPartitionedTable(String tableName) throws SQLException {
-        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts)");
-        LOG.info().$("created table: ").utf8(tableName).$();
-    }
-
-    static Path doesConvertFileExist(CairoEngine engine, TableToken token, boolean doesExist) {
-        final Path path = Path.PATH.get().of(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
-        Assert.assertEquals(Chars.toString(path), doesExist, Files.exists(path.$()));
-        return doesExist ? path : null;
-    }
-
-    static void dropTable(String tableName) throws SQLException {
-        runSqlViaPG("drop table " + tableName);
-        LOG.info().$("dropped table: ").utf8(tableName).$();
-    }
-
-    static void insertInto(String tableName) throws SQLException {
-        runSqlViaPG("insert into " + tableName + " values('2016-01-01T00:00:00.000Z', 1234)");
-        LOG.info().$("inserted 1 row into table: ").utf8(tableName).$();
     }
 
     static void checkSuspended(String tableName) throws SQLException {
@@ -143,12 +97,54 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
         }
     }
 
+    static void createNonPartitionedTable(String tableName) throws SQLException {
+        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts)");
+        LOG.info().$("created table: ").utf8(tableName).$();
+    }
+
+    static SqlExecutionContext createSqlExecutionContext(CairoEngine engine) {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                AllowAllSecurityContext.INSTANCE,
+                null,
+                null,
+                -1,
+                null
+        );
+    }
+
+    static void createTable(String tableName, String walMode) throws SQLException {
+        runSqlViaPG("create table " + tableName + " (ts timestamp, x long) timestamp(ts) PARTITION BY DAY " + walMode);
+        LOG.info().$("created table: ").utf8(tableName).$();
+    }
+
+    static Path doesConvertFileExist(CairoEngine engine, TableToken token, boolean doesExist) {
+        final Path path = Path.PATH.get().of(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+        Assert.assertEquals(Utf8s.toString(path), doesExist, Files.exists(path.$()));
+        return doesExist ? path : null;
+    }
+
+    static void dropTable(String tableName) throws SQLException {
+        runSqlViaPG("drop table " + tableName);
+        LOG.info().$("dropped table: ").utf8(tableName).$();
+    }
+
+    static void insertInto(String tableName) throws SQLException {
+        runSqlViaPG("insert into " + tableName + " values('2016-01-01T00:00:00.000Z', 1234)");
+        LOG.info().$("inserted 1 row into table: ").utf8(tableName).$();
+    }
+
     static void runSqlViaPG(String sql) throws SQLException {
         try (
                 final Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                 final PreparedStatement stmt = connection.prepareStatement(sql)
         ) {
             stmt.execute();
+        }
+    }
+
+    static void setSeqTxn(CairoEngine engine, TableToken token) {
+        try (final TableWriter writer = TestUtils.getWriter(engine, token)) {
+            writer.commitSeqTxn(12345);
         }
     }
 

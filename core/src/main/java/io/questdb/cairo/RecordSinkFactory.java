@@ -49,6 +49,7 @@ public class RecordSinkFactory {
         final int interfaceClassIndex = asm.poolClass(RecordSink.class);
 
         final int rGetInt = asm.poolInterfaceMethod(Record.class, "getInt", "(I)I");
+        final int rGetIPv4 = asm.poolInterfaceMethod(Record.class, "getIPv4", "(I)I");
         final int rGetGeoInt = asm.poolInterfaceMethod(Record.class, "getGeoInt", "(I)I");
         final int rGetLong = asm.poolInterfaceMethod(Record.class, "getLong", "(I)J");
         final int rGetGeoLong = asm.poolInterfaceMethod(Record.class, "getGeoLong", "(I)J");
@@ -107,12 +108,32 @@ public class RecordSinkFactory {
             final int factor = columnFilter.getIndexFactor(index);
             index = (index * factor - 1);
             final int type = columnTypes.getColumnType(index);
+
+            if (factor < 0) {
+                int size = ColumnType.sizeOf(type);
+
+                // skip n-bytes
+                if (size > 0) {
+                    asm.aload(2);
+                    asm.iconst(size);
+                    asm.invokeInterface(wSkip, 1);
+                    continue;
+                }
+            }
+
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetInt, 1);
+                    asm.invokeInterface(wPutInt, 1);
+                    break;
+                case ColumnType.IPv4:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetIPv4, 1);
                     asm.invokeInterface(wPutInt, 1);
                     break;
                 case ColumnType.SYMBOL:
@@ -217,16 +238,6 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetRecord, 1);
                     asm.invokeInterface(wPutRecord, 1);
-                    break;
-                case -ColumnType.INT:
-                    asm.aload(2);
-                    asm.iconst(Integer.BYTES);
-                    asm.invokeInterface(wSkip, 1);
-                    break;
-                case -ColumnType.LONG:
-                    asm.aload(2);
-                    asm.iconst(Long.BYTES);
-                    asm.invokeInterface(wSkip, 1);
                     break;
                 case ColumnType.GEOBYTE:
                     asm.aload(2);

@@ -294,6 +294,11 @@ public class RecordComparatorCompiler {
                     getterNameA = "getInt";
                     comparatorClass = Integer.class;
                     break;
+                case ColumnType.IPv4:
+                    fieldType = "J";
+                    getterNameA = "getLongIPv4";
+                    comparatorClass = Long.class;
+                    break;
                 case ColumnType.LONG:
                     fieldType = "J";
                     getterNameA = "getLong";
@@ -361,7 +366,7 @@ public class RecordComparatorCompiler {
             }
 
             fieldTypeIndices.add(typeIndex);
-            fieldNameIndices.add(nameIndex = asm.poolUtf8().put('f').put(i).$());
+            fieldNameIndices.add(nameIndex = asm.poolUtf8().putAscii('f').put(i).$());
             fieldIndices.add(asm.poolField(thisClassIndex, asm.poolNameAndType(nameIndex, typeIndex)));
 
             int methodIndex;
@@ -369,14 +374,14 @@ public class RecordComparatorCompiler {
             if (columnType == ColumnType.LONG128 || columnType == ColumnType.UUID) {
                 // Special case, Long128 is 2 longs of type J on comparison
                 fieldTypeIndices.add(typeIndex);
-                int nameIndex2 = asm.poolUtf8().put('f').put(i).put(i).$();
+                int nameIndex2 = asm.poolUtf8().putAscii('f').put(i).put(i).$();
                 fieldNameIndices.add(nameIndex2);
                 int nameAndTypeIndex = asm.poolNameAndType(nameIndex2, typeIndex);
                 fieldIndices.add(asm.poolField(thisClassIndex, nameAndTypeIndex));
             }
 
             int getterNameIndex = asm.poolUtf8(getterNameA);
-            int getterSigIndex = asm.poolUtf8().put("(I)").put(getterType).$();
+            int getterSigIndex = asm.poolUtf8().putAscii("(I)").put(getterType).$();
             int getterIndex = asm.poolNameAndType(getterNameIndex, getterSigIndex);
             methodMap.putIfAbsent(getterNameA, methodIndex = asm.poolInterfaceMethod(recordClassIndex, getterIndex));
             fieldRecordAccessorIndicesA.add(methodIndex);
@@ -391,10 +396,10 @@ public class RecordComparatorCompiler {
             comparatorAccessorIndices.add(
                     asm.poolMethod(asm.poolClass(comparatorClass),
                             asm.poolNameAndType(
-                                    compareMethodIndex, comparatorDesc == null ?
-                                            asm.poolUtf8().put('(').put(fieldType).put(fieldType).put(")I").$()
-                                            :
-                                            asm.poolUtf8(comparatorDesc))
+                                    compareMethodIndex,
+                                    comparatorDesc == null
+                                            ? asm.poolUtf8().putAscii('(').put(fieldType).put(fieldType).putAscii(")I").$()
+                                            : asm.poolUtf8(comparatorDesc))
                     ));
         }
     }

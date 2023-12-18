@@ -41,6 +41,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
+
 public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
@@ -102,6 +104,9 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
+                    } catch (AssertionError ex) {
+                        // expected in PARANOIA_MODE == true
+                        Assert.assertTrue(PARANOIA_MODE);
                     }
                     Assert.assertEquals(-1, memoryROffset.getFd());
 
@@ -245,12 +250,13 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
         int fd = ff.openRW(path, CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > 0);
 
-        try (MemoryMARW memoryW = Vm.getMARWInstance()) {
-            memoryW.of(ff, fd, testName.getMethodName(), 16, 0);
-
+        try (
+                MemoryMARW memoryW = Vm.getMARWInstance();
+                Path fileName = new Path().of(testName.getMethodName()).$()
+        ) {
+            memoryW.of(ff, fd, fileName, 16, 0);
             if (writeData) {
                 memoryW.jumpTo(0);
-
 
                 for (long i = 0; i < appendCount; i++) {
                     memoryW.putLong(i * 8L);

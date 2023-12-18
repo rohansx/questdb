@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.jit.JitUtil;
@@ -33,9 +34,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.Dates;
-import io.questdb.std.str.NativeLPSZ;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import sun.misc.Signal;
 
@@ -55,11 +58,12 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    private static final BuildInformation buildInformation = BuildInformationHolder.INSTANCE;
     private final String banner;
+    private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
     private final Metrics metrics;
+    private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
 
     public Bootstrap(String... args) {
@@ -70,7 +74,9 @@ public class Bootstrap {
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
-        this.banner = bootstrapConfiguration.getBanner();
+        banner = bootstrapConfiguration.getBanner();
+        microsecondClock = bootstrapConfiguration.getMicrosecondClock();
+        buildInformation = new BuildInformationHolder(bootstrapConfiguration.getClass());
 
         // non /server.conf properties
         final CharSequenceObjHashMap<String> argsMap = processArgs(args);
@@ -103,7 +109,7 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$("QuestDB server ").$(buildInformation.getQuestDbVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
+        log.advisoryW().$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
         String archName;
         boolean isOsSupported = true;
         switch (Os.type) {
@@ -137,8 +143,10 @@ public class Bootstrap {
         if (isOsSupported) {
             log.advisoryW().$(archName).$(sb).I$();
         } else {
-            log.criticalW().$(archName).$(sb).I$();
+            log.critical().$(archName).$(sb).I$();
         }
+
+        verifyFileLimits();
 
         try {
             if (bootstrapConfiguration.useSite()) {
@@ -146,7 +154,7 @@ public class Bootstrap {
                 extractSite();
             }
 
-            ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
+            final ServerConfiguration configuration = bootstrapConfiguration.getServerConfiguration(this);
             if (configuration == null) {
                 // /server.conf properties
                 final Properties properties = loadProperties();
@@ -174,7 +182,7 @@ public class Bootstrap {
                             if (cairoConf == null) {
                                 cairoConf = new PropCairoConfiguration() {
                                     @Override
-                                    public FilesFacade getFilesFacade() {
+                                    public @NotNull FilesFacade getFilesFacade() {
                                         return ffOverride;
                                     }
                                 };
@@ -233,14 +241,17 @@ public class Bootstrap {
         final CharSequence dbRoot = cairoConfiguration.getRoot();
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
-        NativeLPSZ name = new NativeLPSZ();
-        try (Path path = new Path().of(dbRoot).slash$(); Path other = new Path().of(dbRoot).slash$()) {
-            int plen = path.length();
+        DirectUtf8StringZ name = new DirectUtf8StringZ();
+        try (
+                Path path = new Path().of(dbRoot).slash$();
+                Path other = new Path().of(dbRoot).slash$()
+        ) {
+            int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
                 if (Files.notDots(pUtf8NameZ)) {
                     name.of(pUtf8NameZ);
-                    if (Chars.startsWith(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
+                    if (Utf8s.startsWithAscii(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
                         path.trimTo(plen).concat(pUtf8NameZ).$();
                         boolean shouldRename = false;
                         do {
@@ -251,9 +262,9 @@ public class Bootstrap {
                             }
                         } while (counter.get() < maxFiles);
                         if (shouldRename && ff.rename(path, other) == 0) {
-                            log.criticalW().$("found crash file [path=").$(other).I$();
+                            log.critical().$("found crash file [path=").$(other).I$();
                         } else {
-                            log.criticalW().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
+                            log.critical().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
                         }
                     }
                 }
@@ -271,13 +282,13 @@ public class Bootstrap {
             final byte[] buffer = new byte[1024 * 1024];
 
             boolean extracted = false;
-            final String oldVersionStr = getPublicVersion(publicDir);
-            final CharSequence dbVersion = buildInformation.getQuestDbVersion();
-            if (oldVersionStr == null) {
+            final String oldSwVersion = getPublicVersion(publicDir);
+            final CharSequence newSwVersion = buildInformation.getSwVersion();
+            if (oldSwVersion == null) {
                 if (thisVersion != 0) {
                     extractSite0(publicDir, buffer, Long.toString(thisVersion));
                 } else {
-                    extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
                 }
                 extracted = true;
             } else {
@@ -285,8 +296,8 @@ public class Bootstrap {
                 // in this package "thisVersion" is always 0, and we need to fall back
                 // to the database version.
                 if (thisVersion == 0) {
-                    if (!Chars.equals(oldVersionStr, dbVersion)) {
-                        extractSite0(publicDir, buffer, Chars.toString(dbVersion));
+                    if (!Chars.equals(oldSwVersion, newSwVersion)) {
+                        extractSite0(publicDir, buffer, Chars.toString(newSwVersion));
                         extracted = true;
                     }
                 } else {
@@ -294,7 +305,7 @@ public class Bootstrap {
                     // which means user might have switched from RT distribution to no-JVM on the same data dir
                     // in this case we might fail to parse the version string
                     try {
-                        final long oldVersion = Numbers.parseLong(oldVersionStr);
+                        final long oldVersion = Numbers.parseLong(oldSwVersion);
                         if (thisVersion > oldVersion) {
                             extractSite0(publicDir, buffer, Long.toString(thisVersion));
                             extracted = true;
@@ -331,6 +342,10 @@ public class Bootstrap {
         return metrics;
     }
 
+    public MicrosecondClock getMicrosecondClock() {
+        return microsecondClock;
+    }
+
     public String getRootDirectory() {
         return rootDirectory;
     }
@@ -345,6 +360,10 @@ public class Bootstrap {
             properties.load(is);
         }
         return properties;
+    }
+
+    public CairoEngine newCairoEngine() {
+        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
@@ -503,6 +522,41 @@ public class Bootstrap {
         }
     }
 
+    private void verifyFileLimits() {
+        boolean insufficientLimits = false;
+
+        final long fileLimit = Files.getFileLimit();
+        if (fileLimit < 0) {
+            log.error().$("could not read fs.file-max [errno=").$(Os.errno()).I$();
+        }
+        if (fileLimit > 0) {
+            if (fileLimit <= Files.DEFAULT_FILE_LIMIT) {
+                insufficientLimits = true;
+                log.advisoryW().$("fs.file-max limit is too low [limit=").$(fileLimit).$("] (SYSTEM COULD BE UNSTABLE)").$();
+            } else {
+                log.advisoryW().$("fs.file-max checked [limit=").$(fileLimit).I$();
+            }
+        }
+
+        final long mapCountLimit = Files.getMapCountLimit();
+        if (mapCountLimit < 0) {
+            log.error().$("could not read vm.max_map_count [errno=").$(Os.errno()).I$();
+        }
+        if (mapCountLimit > 0) {
+            if (mapCountLimit <= Files.DEFAULT_MAP_COUNT_LIMIT) {
+                insufficientLimits = true;
+                log.advisoryW().$("vm.max_map_count limit is too low [limit=").$(mapCountLimit).$("] (SYSTEM COULD BE UNSTABLE)").$();
+            } else {
+                log.advisoryW().$("vm.max_map_count checked [limit=").$(mapCountLimit).I$();
+            }
+        }
+
+        if (insufficientLimits) {
+            log.advisoryW().$("make sure to increase fs.file-max and vm.max_map_count limits:\n" +
+                    "https://questdb.io/docs/deployment/capacity-planning/#os-configuration").$();
+        }
+    }
+
     private void verifyFileSystem(Path path, CharSequence rootDir, String kind) {
         if (rootDir == null) {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
@@ -520,7 +574,7 @@ public class Bootstrap {
         }
     }
 
-    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner) {
+    static void logWebConsoleUrls(ServerConfiguration config, Log log, String banner, String schema) {
         if (config.getHttpServerConfiguration().isEnabled()) {
             final LogRecord r = log.infoW().$('\n').$(banner).$("Web Console URL(s):").$("\n\n");
 
@@ -533,7 +587,7 @@ public class Bootstrap {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                r.$('\t').$("http://").$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
+                                r.$('\t').$(schema).$(inetAddress.getHostAddress()).$(':').$(bindPort).$('\n');
                             }
                         }
                     }

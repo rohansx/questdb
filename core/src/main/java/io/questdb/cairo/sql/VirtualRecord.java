@@ -27,8 +27,10 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 public class VirtualRecord implements ColumnTypes, Record {
     private final int columnCount;
@@ -119,6 +121,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
+    public int getIPv4(int col) {
+        return getFunction(col).getIPv4(base);
+    }
+
+    @Override
     public int getInt(int col) {
         return getFunction(col).getInt(base);
     }
@@ -139,7 +146,7 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         getFunction(col).getLong256(base, sink);
     }
 
@@ -151,6 +158,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public Long256 getLong256B(int col) {
         return getFunction(col).getLong256B(base);
+    }
+
+    @Override
+    public long getLongIPv4(int col) {
+        return Numbers.ipv4ToLong(getIPv4(col));
     }
 
     @Override

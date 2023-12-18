@@ -34,6 +34,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 public class IndexedParameterLinkFunction implements ScalarFunction {
@@ -119,6 +120,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        return getBase().getIPv4(rec);
+    }
+
+    @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
     }
@@ -139,7 +145,7 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSinkBase<?> sink) {
         getBase().getLong256(rec, sink);
     }
 

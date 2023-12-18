@@ -25,8 +25,8 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
@@ -35,13 +35,14 @@ import io.questdb.cutlass.text.types.TypeAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.DirectCharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -53,7 +54,7 @@ public class TextLoader implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(TextLoader.class);
     private final JsonLexer jsonLexer;
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
-    private final Path path = new Path();
+    private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration;
     private final TextDelimiterScanner textDelimiterScanner;
@@ -129,21 +130,28 @@ public class TextLoader implements Closeable, Mutable {
     }
 
     public void configureDestination(
-            CharSequence tableName,
+            @NotNull Utf8Sequence tableName,
             boolean overwrite,
             int atomicity,
             int partitionBy,
-            CharSequence timestampColumn,
-            CharSequence timestampFormat
+            @Nullable Utf8Sequence timestampColumn,
+            @Nullable Utf8Sequence timestampFormat
     ) {
-        configureDestination(tableName, overwrite, atomicity, partitionBy, timestampColumn);
-        this.textDelimiterScanner.setTableName(tableName);
-        this.textMetadataParser.setTableName(tableName);
-        this.timestampColumn = timestampColumn;
+        final String tableNameUtf16 = Utf8s.toString(tableName);
+        final String timestampColumnUtf16 = Utf8s.toString(timestampColumn);
+        final String timestampFormatUtf16 = Utf8s.toString(timestampFormat);
+        textWriter.of(tableNameUtf16, overwrite, atomicity, partitionBy, timestampColumnUtf16);
+        this.tableName = tableNameUtf16;
+        this.textDelimiterScanner.setTableName(tableNameUtf16);
+        this.textMetadataParser.setTableName(tableNameUtf16);
+        this.timestampColumn = timestampColumnUtf16;
         if (timestampFormat != null) {
-            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormat);
-            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
-                    textConfiguration.getDefaultDateLocale());
+            DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get(timestampFormatUtf16);
+            this.timestampAdapter = (TimestampAdapter) typeManager.nextTimestampAdapter(
+                    false,
+                    dateFormat,
+                    textConfiguration.getDefaultDateLocale()
+            );
         }
 
         LOG.info()
@@ -154,17 +162,6 @@ public class TextLoader implements Closeable, Mutable {
                 .$(", timestamp=").$(timestampColumn)
                 .$(", timestampFormat=").$(timestampFormat)
                 .$(']').$();
-    }
-
-    public void configureDestination(
-            CharSequence tableName,
-            boolean overwrite,
-            int atomicity,
-            int partitionBy,
-            CharSequence timestampColumn
-    ) {
-        textWriter.of(tableName, overwrite, atomicity, partitionBy, timestampColumn);
-        this.tableName = tableName;
     }
 
     public byte getColumnDelimiter() {
@@ -179,8 +176,16 @@ public class TextLoader implements Closeable, Mutable {
         return lexer != null ? lexer.getErrorCount() : 0;
     }
 
+    public int getMaxUncommittedRows() {
+        return textWriter.getMaxUncommittedRows();
+    }
+
     public RecordMetadata getMetadata() {
         return textWriter.getMetadata();
+    }
+
+    public long getO3MaxLag() {
+        return textWriter.getO3MaxLag();
     }
 
     public long getParsedLineCount() {

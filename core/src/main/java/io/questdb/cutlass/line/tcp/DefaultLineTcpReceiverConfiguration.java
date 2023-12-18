@@ -28,8 +28,7 @@ import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
@@ -54,7 +53,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
             return 0;
         }
     };
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration();
 
     @Override
     public String getAuthDB() {
@@ -117,7 +115,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public IODispatcherConfiguration getDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
+        return DefaultIODispatcherConfiguration.INSTANCE;
+    }
+
+    @Override
+    public FactoryProvider getFactoryProvider() {
+        return DefaultFactoryProvider.INSTANCE;
     }
 
     @Override
@@ -166,18 +169,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public FactoryProvider getFactoryProvider() {
-        return DefaultFactoryProvider.INSTANCE;
-    }
-
-    @Override
     public long getSymbolCacheWaitUsBeforeReload() {
         return 500_000;
     }
 
     @Override
-    public LineProtoTimestampAdapter getTimestampAdapter() {
-        return LineProtoNanoTimestampAdapter.INSTANCE;
+    public LineTcpTimestampAdapter getTimestampAdapter() {
+        return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
     }
 
     @Override
@@ -212,11 +210,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
 
     @Override
     public boolean isSymbolAsFieldSupported() {
-        return false;
-    }
-
-    @Override
-    public boolean readOnlySecurityContext() {
         return false;
     }
 }

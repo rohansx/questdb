@@ -38,6 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -50,7 +51,6 @@ import org.junit.Test;
 
 import java.io.File;
 import java.net.URISyntaxException;
-import java.net.URL;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -63,129 +63,14 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if (Chars.endsWith(name, Files.SEPARATOR + "sym.v") && Chars.contains(name, "1970-01-02") && counter.decrementAndGet() == 0) {
+            if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
             return super.openRW(name, opts);
         }
     };
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
-    private static final FilesFacade ffAllocateFailure = new TestFilesFacadeImpl() {
-        private final AtomicInteger increment = new AtomicInteger();
-        private boolean failNextAlloc = false;
-
-        @Override
-        public boolean allocate(int fd, long size) {
-            if (!fixFailure.get() || failNextAlloc) {
-                failNextAlloc = false;
-                fixFailure.set(false);
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
-
-        @Override
-        public long length(int fd) {
-            if (fd > 0) {
-                final long remaining = counter.decrementAndGet();
-                if (!fixFailure.get() || remaining == 0) {
-                    failNextAlloc = true;
-                    return 0;
-                }
-            } else {
-                // For debugging, if new call with ff.length(fd) is added, change it
-                // to ff.length(-fd) and adjust counter set by the test by the number
-                // in increment when 0 is returned
-                increment.incrementAndGet();
-            }
-            return super.length(Math.abs(fd));
-        }
-    };
-    private static final FilesFacade ffFailToAllocateIndex = new TestFilesFacadeImpl() {
-        boolean failNextAlloc = false;
-        int theFd;
-
-        @Override
-        public boolean allocate(int fd, long size) {
-            if (!fixFailure.get() || (fd == theFd && failNextAlloc)) {
-                failNextAlloc = false;
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
-
-        @Override
-        public boolean close(int fd) {
-            if (fd == theFd) {
-                theFd = -1;
-            }
-            return super.close(fd);
-        }
-
-        @Override
-        public long length(int fd) {
-            if (!fixFailure.get() || (fd == theFd && counter.decrementAndGet() == 0)) {
-                fixFailure.set(false);
-                failNextAlloc = true;
-                return 0L;
-            }
-            return super.length(fd);
-        }
-
-        @Override
-        public int openRW(LPSZ name, long opts) {
-            int fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-07" + Files.SEPARATOR + "m.i")) {
-                theFd = fd;
-            }
-            return fd;
-        }
-    };
-    private static final FilesFacade ffIndexAllocateFailure = new TestFilesFacadeImpl() {
-        boolean failNextAlloc = false;
-        int theFd = 0;
-
-        @Override
-        public boolean allocate(int fd, long size) {
-            if (!fixFailure.get() || (fd == theFd && failNextAlloc)) {
-                // don't forget to set this to 0 so that next attempt doesn't fail
-                theFd = 0;
-                failNextAlloc = false;
-                fixFailure.set(false);
-                return false;
-            }
-            return super.allocate(fd, size);
-        }
-
-        @Override
-        public boolean close(int fd) {
-            if (fd > 0 && fd == theFd) {
-                theFd = 0;
-            }
-            return super.close(fd);
-        }
-
-        @Override
-        public long length(int fd) {
-            if (!fixFailure.get() || fd == theFd) {
-                failNextAlloc = true;
-                fixFailure.set(false);
-                return 0;
-            }
-            return super.length(fd);
-        }
-
-        @Override
-        public int openRW(LPSZ name, long opts) {
-            int fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "sym.v") && counter.decrementAndGet() == 0) {
-                theFd = fd;
-            }
-            return fd;
-        }
-    };
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
-
         @Override
         public boolean close(int fd) {
             if (fd > 0 && fd == this.fd) {
@@ -207,7 +92,7 @@ public class O3FailureTest extends AbstractO3Test {
         @Override
         public int openRW(LPSZ name, long opts) {
             int fd = super.openRW(name, opts);
-            if (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
+            if (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
                 this.fd = fd;
             }
             return fd;
@@ -216,27 +101,17 @@ public class O3FailureTest extends AbstractO3Test {
     private static final FilesFacade ffMkDirFailure = new TestFilesFacadeImpl() {
         @Override
         public int mkdirs(Path path, int mode) {
-            if (!fixFailure.get() || (Chars.contains(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.containsAscii(path, "1970-01-06.14") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
             return super.mkdirs(path, mode);
         }
     };
-    private static final FilesFacade ffOpenFailure = new TestFilesFacadeImpl() {
-        @Override
-        public int openRW(LPSZ name, long opts) {
-            if (!fixFailure.get() || (Chars.endsWith(name, Files.SEPARATOR + "ts.d") && Chars.contains(name, "1970-01-06") && counter.decrementAndGet() == 0)) {
-                fixFailure.set(false);
-                return -1;
-            }
-            return super.openRW(name, opts);
-        }
-    };
     private static final FilesFacade ffOpenRW = new TestFilesFacadeImpl() {
         @Override
         public int openRW(LPSZ name, long opts) {
-            if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
+            if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06.14" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
             }
@@ -289,7 +164,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (this.fd >= 0 && fd > 0 && Chars.endsWith(name, fileName)) {
+                if (this.fd >= 0 && fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
                 }
@@ -341,7 +216,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
-                if (fd > 0 && Chars.endsWith(name, fileName)) {
+                if (fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
                 }
@@ -387,7 +262,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -413,7 +288,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -449,7 +324,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -482,7 +357,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -532,7 +407,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -559,7 +434,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.contains(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(name, "1970-01-06.14" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
                 return fd;
@@ -585,7 +460,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -600,7 +475,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -615,7 +490,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(4, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -630,7 +505,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (!fixFailure.get() || (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
+                if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
                 }
@@ -680,13 +555,6 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    public void testFailOnResizingIndexContended() throws Exception {
-        // this places break point on resize of key file
-        counter.set(152 + 12 + 20 + 19);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
     public void testFailOnTruncateKeyIndexContended() throws Exception {
         counter.set(0);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
@@ -720,18 +588,24 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFixedColumnCopyPrefixFails() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         int storageLength = 8;
         long records = 500;
 
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
+
+                    Assume.assumeFalse(Os.isWindows());
+                    Assert.assertTrue("mixed IO should be enabled non-windows", engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
-                    compiler.compile("create table " + tableName + " as ( " +
+                    compiler.compile(
+                            "create table " + tableName + " as ( " +
                                     "select " +
                                     "x, " +
                                     " timestamp_sequence('2022-02-24', 1000) ts" +
@@ -744,12 +618,13 @@ public class O3FailureTest extends AbstractO3Test {
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {
-                        TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')");
+                        CairoEngine.insert(compiler, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(compiler,
+                    TestUtils.assertSql(
+                            compiler,
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
@@ -763,7 +638,7 @@ public class O3FailureTest extends AbstractO3Test {
 
                     // Insert ok after failure
                     o3Ts = Timestamps.toString(maxTimestamp - 3000);
-                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')");
+                    CairoEngine.insert(compiler, "insert into " + tableName + " VALUES(-1, '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext, "select * from " + tableName + " limit -5,5",
@@ -802,7 +677,8 @@ public class O3FailureTest extends AbstractO3Test {
     public void testOOOFollowedByAnotherOOO() throws Exception {
         counter.set(1);
         final AtomicBoolean restoreDiskSpace = new AtomicBoolean(false);
-        executeWithPool(0,
+        executeWithPool(
+                0,
                 (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
                 new TestFilesFacadeImpl() {
                     boolean armageddon = false;
@@ -836,14 +712,15 @@ public class O3FailureTest extends AbstractO3Test {
                     @Override
                     public int openRW(LPSZ name, long opts) {
                         int fd = super.openRW(name, opts);
-                        if (Chars.endsWith(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
+                        if (Utf8s.endsWithAscii(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
                             if (counter.decrementAndGet() == 0) {
                                 theFd = fd;
                             }
                         }
                         return fd;
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -880,18 +757,6 @@ public class O3FailureTest extends AbstractO3Test {
                 return super.openRW(name, opts);
             }
         });
-    }
-
-    @Test
-    public void testPartitionedAllocateLastPartitionFail() throws Exception {
-        counter.set(2);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffFailToAllocateIndex);
-    }
-
-    @Test
-    public void testPartitionedAllocateLastPartitionFailNoReopen() throws Exception {
-        counter.set(2);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffFailToAllocateIndex);
     }
 
     @Test
@@ -934,7 +799,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -970,7 +835,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "ts.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
                 return fd;
@@ -984,7 +849,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -998,132 +863,12 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
             }
         });
-    }
-
-    @Test
-    public void testPartitionedDataAppendOODataNotNullStrTail() throws Exception {
-        counter.set(174 + 12 + 19);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOODataNotNullStrTailContended() throws Exception {
-        counter.set(174 + 12 + 19);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFail() throws Exception {
-        counter.set(2);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOODataNotNullStrTailIndexAllocateFailContended() throws Exception {
-        counter.set(2);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffIndexAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOODataNotNullStrTailParallel() throws Exception {
-        counter.set(174 + 45 + 12 + 27);
-        executeWithPool(2, O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOODatThenRegularAppend() throws Exception {
-        counter.set(165 + 45 + 12 + 21);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODatThenRegularAppend0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOOData() throws Exception {
-        counter.set(165 + 45 + 12 + 18);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOODataContended() throws Exception {
-        counter.set(165 + 45 + 12 + 21);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOODataMapVar() throws Exception {
-        counter.set(3);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
-
-            @Override
-            public boolean close(int fd) {
-                if (fd > 0 && fd == this.fd) {
-                    this.fd = -1;
-                }
-                return super.close(fd);
-            }
-
-            @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (!fixFailure.get() || this.fd == fd) {
-                    fixFailure.set(false);
-                    this.fd = -1;
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
-                    this.fd = fd;
-                }
-                return fd;
-            }
-        });
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOODataMapVarContended() throws Exception {
-        counter.set(3);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
-
-            @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (!fixFailure.get() || this.fd == fd) {
-                    fixFailure.set(false);
-                    this.fd = -1;
-                    return -1;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
-                    this.fd = fd;
-                }
-                return fd;
-            }
-        });
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOODataParallel() throws Exception {
-        counter.set(193 + 45 + 18 + 27);
-        executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
-    public void testPartitionedDataAppendOOPrependOODataParallelNoReopen() throws Exception {
-        counter.set(176 + 45 + 18 + 26);
-        executeWithPool(4, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetryNoReopen, ffAllocateFailure);
     }
 
     @Test
@@ -1144,7 +889,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
@@ -1158,24 +903,12 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testPartitionedOOPrefixesExistingPartitionsFailRetry0, new TestFilesFacadeImpl() {
             @Override
             public int mkdirs(Path path, int mode) {
-                if (Chars.contains(path, "1970-01-01") && counter.decrementAndGet() == 0) {
+                if (Utf8s.containsAscii(path, "1970-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.mkdirs(path, mode);
             }
         });
-    }
-
-    @Test
-    public void testPartitionedOpenTimestampFail() throws Exception {
-        counter.set(3);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
-    }
-
-    @Test
-    public void testPartitionedOpenTimestampFailContended() throws Exception {
-        counter.set(3);
-        executeWithPool(0, O3FailureTest::testPartitionedDataAppendOOPrependOODataFailRetry0, ffOpenFailure);
     }
 
     @Test
@@ -1196,28 +929,27 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     @Test
-    public void testSetAppendPositionFails() throws Exception {
-        counter.set(169 + 12 + 20);
-        executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataNotNullStrTailFailRetry0, ffAllocateFailure);
-    }
-
-    @Test
     public void testTwoRowsConsistency() throws Exception {
         executeWithPool(0, O3FailureTest::testTwoRowsConsistency0);
     }
 
     @Test
     public void testVarColumnCopyPrefixFails() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         String strColVal = "[srcDataMax=165250000]";
         int storageLength = getStorageLength(strColVal);
         long records = 500;
 
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
+
+                    Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
+
                     String tableName = "testVarColumnCopyPrefixFails";
                     compiler.compile(
                             "create table " + tableName + " as ( " +
@@ -1233,12 +965,13 @@ public class O3FailureTest extends AbstractO3Test {
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
 
                     try {
-                        TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                        CairoEngine.insert(compiler, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
 
-                    TestUtils.assertSql(compiler,
+                    TestUtils.assertSql(
+                            compiler,
                             sqlExecutionContext,
                             "select * from " + tableName + " limit -5,5",
                             sink,
@@ -1252,7 +985,7 @@ public class O3FailureTest extends AbstractO3Test {
 
                     // Insert ok after failure
                     o3Ts = Timestamps.toString(maxTimestamp - 3000);
-                    TestUtils.insert(compiler, sqlExecutionContext, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')");
+                    CairoEngine.insert(compiler, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext, "select * from " + tableName + " limit -5,5",
@@ -1298,7 +1031,7 @@ public class O3FailureTest extends AbstractO3Test {
 
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.contains(name, "1970-01-01.4" + Files.SEPARATOR + "g.d")) {
+                if (Utf8s.containsAscii(name, "1970-01-01.4" + Files.SEPARATOR + "g.d")) {
                     tooManyFiles = true;
                     return -1;
                 }
@@ -1325,24 +1058,23 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             String resourceName
-    ) throws URISyntaxException, SqlException {
+    ) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "x");
-
-        URL url = O3FailureTest.class.getResource(resourceName);
-        Assert.assertNotNull(url);
-        TestUtils.assertEquals(new File(url.toURI()), sink);
+        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
     }
 
     private static void assertXCountAndMax(
+            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedMaxTimestamp
     ) throws SqlException {
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
+        assertMaxTimestamp(engine, expectedMaxTimestamp);
     }
 
     private static void assertXCountAndMax(
+            CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence expectedCount,
@@ -1351,7 +1083,7 @@ public class O3FailureTest extends AbstractO3Test {
         sink2.clear();
         sink2.put(expectedCount);
         assertXCount(compiler, sqlExecutionContext);
-        assertMaxTimestamp(compiler.getEngine(), expectedMaxTimestamp);
+        assertMaxTimestamp(engine, expectedMaxTimestamp);
     }
 
     private static FilesFacade failOnOpenRW(String fileName, int count) {
@@ -1359,7 +1091,7 @@ public class O3FailureTest extends AbstractO3Test {
         return new TestFilesFacadeImpl() {
             @Override
             public int openRW(LPSZ name, long opts) {
-                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     return -1;
                 }
                 return super.openRW(name, opts);
@@ -2077,7 +1809,7 @@ public class O3FailureTest extends AbstractO3Test {
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, URISyntaxException {
+    ) throws SqlException {
 
         //
         // ----- last partition
@@ -2096,6 +1828,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2118,23 +1851,24 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", sqlExecutionContext);
+        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
+        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
+        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
+        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
+        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
+        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
+        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
+        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
+        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2173,6 +1907,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table append as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -2185,7 +1920,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
                         " rnd_long() j," +
-                        " timestamp_sequence(549920000000L,100000L) ts," +
+                        " timestamp_sequence(549930000000L,100000L) ts," +
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_str(5,16,2) n," +
@@ -2217,16 +1952,18 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
+        compiler.compile("create table y as (x union all append)", sqlExecutionContext);
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
-        assertSqlResultAgainstFile(
+        assertO3DataConsistencyStableSort(
+                engine,
                 compiler,
                 sqlExecutionContext,
-                "/o3/testColumnTopLastDataOOOData.txt"
+                null,
+                null
         );
-
     }
 
     private static void testColumnTopLastOOOPrefixFailRetry0(
@@ -2259,19 +1996,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", sqlExecutionContext);
+        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
+        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
+        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
+        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
+        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
+        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
+        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
+        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
+        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -2358,7 +2095,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -2400,19 +2137,19 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("alter table x add column v double", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", executionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", executionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", executionContext);
+        engine.ddl("alter table x add column v1 float", executionContext);
+        engine.ddl("alter table x add column v2 int", executionContext);
+        engine.ddl("alter table x add column v3 byte", executionContext);
+        engine.ddl("alter table x add column v4 short", executionContext);
+        engine.ddl("alter table x add column v5 boolean", executionContext);
+        engine.ddl("alter table x add column v6 date", executionContext);
+        engine.ddl("alter table x add column v7 timestamp", executionContext);
+        engine.ddl("alter table x add column v8 symbol", executionContext);
+        engine.ddl("alter table x add column v10 char", executionContext);
+        engine.ddl("alter table x add column v11 string", executionContext);
+        engine.ddl("alter table x add column v12 binary", executionContext);
+        engine.ddl("alter table x add column v9 long", executionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2461,7 +2198,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCountAndMax(compiler, executionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, executionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -2473,7 +2210,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testColumnTopMidAppendColumnFailRetry0(
@@ -2506,19 +2243,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", sqlExecutionContext);
+        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
+        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
+        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
+        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
+        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
+        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
+        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
+        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
+        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -2554,8 +2291,7 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_str() v11," +
                         " rnd_bin() v12," +
                         " rnd_long() v9" +
-                        " from long_sequence(1000)" +
-                        "",
+                        " from long_sequence(1000)",
                 sqlExecutionContext
         );
 
@@ -2605,7 +2341,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignore) {
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -2647,19 +2383,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", sqlExecutionContext);
+        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
+        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
+        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
+        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
+        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
+        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
+        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
+        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
+        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "insert into x " +
@@ -2746,7 +2482,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         compiler.compile("insert into x select * from append", sqlExecutionContext);
 
@@ -2788,19 +2524,19 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column v double", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v1 float", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v2 int", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v3 byte", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v4 short", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v5 boolean", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v6 date", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v7 timestamp", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v8 symbol index", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v10 char", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v11 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v12 binary", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column v9 long", sqlExecutionContext).execute(null).await();
+        engine.ddl("alter table x add column v double", sqlExecutionContext);
+        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
+        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
+        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
+        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
+        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
+        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.ddl("alter table x add column v8 symbol index", sqlExecutionContext);
+        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
+        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
+        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
+        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
 
         compiler.compile(
                 "create table append as (" +
@@ -2853,7 +2589,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         fixFailure.set(true);
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -2865,7 +2601,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testFailMergeWalFixIntoLag0(
@@ -2894,7 +2630,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_long256(5) l256," +
                         " timestamp_sequence('2020-02-24',100L) ts" +
                         " from long_sequence(50000)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -2903,12 +2640,13 @@ public class O3FailureTest extends AbstractO3Test {
         engine.releaseInactive();
 
         o3MemMaxPages = Integer.MAX_VALUE;
-        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext);
 
         drainWalQueue(engine);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
+                engine,
                 compiler,
                 executionContext,
                 "count\n" +
@@ -2944,7 +2682,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " rnd_str(5,160,2) str," +
                         " timestamp_sequence('2020-02-24',100L) ts" +
                         " from long_sequence(50000)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -2953,12 +2692,13 @@ public class O3FailureTest extends AbstractO3Test {
         engine.releaseInactive();
 
         o3MemMaxPages = Integer.MAX_VALUE;
-        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext);
 
         drainWalQueue(engine);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
+                engine,
                 compiler,
                 executionContext,
                 "count\n" +
@@ -2996,7 +2736,8 @@ public class O3FailureTest extends AbstractO3Test {
                             " from long_sequence(500000)" +
                             "union all " +
                             "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                    executionContext);
+                    executionContext
+            );
             Assert.fail();
         } catch (CairoException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), "commit failed");
@@ -3006,9 +2747,11 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)" +
                         "union all select -2, -2, CAST('2020-02-25T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
         assertXCountAndMax(
+                engine,
                 compiler,
                 executionContext,
                 "count\n" +
@@ -3046,7 +2789,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " from long_sequence(500000)" +
                         "union all " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
         compiler.compile(
                 "insert into x " +
@@ -3057,7 +2801,8 @@ public class O3FailureTest extends AbstractO3Test {
                         " from long_sequence(500000)" +
                         "union all " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
-                executionContext);
+                executionContext
+        );
 
 
         drainWalQueue(engine);
@@ -3066,12 +2811,13 @@ public class O3FailureTest extends AbstractO3Test {
         engine.releaseInactive();
         o3MemMaxPages = Integer.MAX_VALUE;
 
-        compiler.compile("ALTER TABLE x RESUME WAL", executionContext).execute(null).await();
+        compiler.compile("ALTER TABLE x RESUME WAL", executionContext);
         drainWalQueue(engine);
 
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
 
         assertXCountAndMax(
+                engine,
                 compiler,
                 executionContext,
                 "count\n" +
@@ -3119,7 +2865,7 @@ public class O3FailureTest extends AbstractO3Test {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3129,7 +2875,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top where ts >= 0"
         );
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testInsertAsSelectNulls0(
@@ -3170,7 +2916,7 @@ public class O3FailureTest extends AbstractO3Test {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3180,7 +2926,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from top where ts >= 0"
         );
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testOooFollowedByAnotherOOO0(
@@ -3192,6 +2938,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table x as (" +
                         "select" +
+                        " 1 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3225,6 +2972,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table 1am as (" +
                         "select" +
+                        " 2 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3250,6 +2998,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile(
                 "create table tail as (" +
                         "select" +
+                        " 3 as commit," +
                         " cast(x as int) i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
@@ -3305,11 +3054,11 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("insert into x select * from 1am", sqlExecutionContext);
         compiler.compile("insert into x select * from tail", sqlExecutionContext);
 
-        printSqlResult(compiler, sqlExecutionContext, "y order by ts");
+        printSqlResult(compiler, sqlExecutionContext, "y order by ts, commit");
         TestUtils.printSql(compiler, sqlExecutionContext, "x", sink2);
         TestUtils.assertEquals(sink, sink2);
 
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testOutOfFileHandles0(
@@ -3374,7 +3123,7 @@ public class O3FailureTest extends AbstractO3Test {
         compiler.compile("create table y1 as (y) timestamp(ts) partition by DAY", executionContext);
 
         // create another compiler to be used by second pool
-        try (SqlCompiler compiler2 = new SqlCompiler(engine)) {
+        try (SqlCompiler compiler2 = engine.getSqlCompiler()) {
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final SOCountDownLatch haltLatch = new SOCountDownLatch(2);
             final AtomicInteger errorCount = new AtomicInteger();
@@ -3392,6 +3141,7 @@ public class O3FailureTest extends AbstractO3Test {
                             barrier.await();
                             compiler.compile("insert into x select * from y", executionContext);
                         } catch (Throwable e) {
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                             errorCount.incrementAndGet();
                         } finally {
@@ -3414,6 +3164,7 @@ public class O3FailureTest extends AbstractO3Test {
                             barrier.await();
                             compiler2.compile("insert into x1 select * from y1", executionContext);
                         } catch (Throwable e) {
+                            //noinspection CallToPrintStackTrace
                             e.printStackTrace();
                             errorCount.incrementAndGet();
                         } finally {
@@ -3504,7 +3255,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         fixFailure.set(true);
 
-        assertXCountAndMax(compiler, executionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, executionContext, expectedMaxTimestamp);
 
         // create third table, which will contain both X and 1AM
         assertO3DataConsistency(
@@ -3516,7 +3267,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, executionContext, engine);
-        assertXCountY(compiler, executionContext);
+        assertXCountY(engine, compiler, executionContext);
     }
 
     private static void testPartitionedDataAppendOODataIndexedFailRetry0(
@@ -3582,7 +3333,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3592,325 +3343,7 @@ public class O3FailureTest extends AbstractO3Test {
                 "insert into x select * from append"
         );
 
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedDataAppendOODataNotNullStrTailFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " cast(null as binary) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(518300000010L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(100)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        for (int i = 0; i < 20; i++) {
-            try {
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException | CairoError ignore) {
-            }
-        }
-
-        fixFailure.set(true);
-
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
-        );
-
-        assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedDataAppendOOPrependOODatThenRegularAppend0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        // create table with roughly 2AM data
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " cast(null as binary) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        // all records but one is appended to middle partition
-        // last record is prepended to the last partition
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(518390000000L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(101)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        for (int i = 0; i < 10; i++) {
-            try {
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ignored) {
-            }
-        }
-
-        fixFailure.set(true);
-
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        // all records but one is appended to middle partition
-        // last record is prepended to the last partition
-        compiler.compile(
-                "create table append2 as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(551000000000L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(101)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-
-        // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append2)",
-                "insert into x select * from append2"
-        );
-
-        assertIndexConsistency(
-                compiler,
-                sqlExecutionContext,
-                engine);
-
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        testPartitionedDataAppendOOPrependOODataFailRetry0(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                true
-        );
-    }
-
-    private static void testPartitionedDataAppendOOPrependOODataFailRetry0(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            boolean reopenTableWriter
-    ) throws SqlException {
-        // create table with roughly 2AM data
-        compiler.compile(
-                "create table x as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " cast(null as binary) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(510)" +
-                        "), index(sym) timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        // all records but one is appended to middle partition
-        // last record is prepended to the last partition
-        compiler.compile(
-                "create table append as (" +
-                        "select" +
-                        " cast(x as int) i," +
-                        " rnd_symbol('msft','ibm', 'googl') sym," +
-                        " round(rnd_double(0)*100, 3) amt," +
-                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
-                        " rnd_boolean() b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(518390000000L,100000L) ts," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_char() t" +
-                        " from long_sequence(101)" +
-                        ") timestamp (ts) partition by DAY",
-                sqlExecutionContext
-        );
-
-        final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
-
-        for (int i = 0; i < 15; i++) {
-            try {
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ignored) {
-            }
-        }
-
-        fixFailure.set(true);
-
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
-
-        if (reopenTableWriter) {
-            engine.releaseAllWriters();
-        }
-
-        // create third table, which will contain both X and 1AM
-        assertO3DataConsistency(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                "create table y as (x union all append)",
-                "insert into x select * from append"
-        );
-
-        assertIndexConsistency(
-                compiler,
-                sqlExecutionContext,
-                engine);
-
-        assertXCountY(compiler, sqlExecutionContext);
-    }
-
-    private static void testPartitionedDataAppendOOPrependOODataFailRetryNoReopen(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        testPartitionedDataAppendOOPrependOODataFailRetry0(
-                engine,
-                compiler,
-                sqlExecutionContext,
-                false
-        );
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedOOPrefixesExistingPartitionsFailRetry0(
@@ -3978,7 +3411,7 @@ public class O3FailureTest extends AbstractO3Test {
         } catch (CairoException ignored) {
         }
 
-        assertXCountAndMax(compiler, sqlExecutionContext, expectedMaxTimestamp);
+        assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
         assertO3DataConsistency(
                 engine,
@@ -3989,7 +3422,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testPartitionedWithAllocationCallLimit0(
@@ -4029,7 +3462,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         assertIndexConsistency(compiler, sqlExecutionContext, engine);
-        assertXCountY(compiler, sqlExecutionContext);
+        assertXCountY(engine, compiler, sqlExecutionContext);
     }
 
     private static void testTwoRowsConsistency0(
@@ -4050,10 +3483,9 @@ public class O3FailureTest extends AbstractO3Test {
                 "ts\tblock_nr\n"
         );
 
-        TestUtils.insert(
+        CairoEngine.insert(
                 compiler,
-                sqlExecutionContext,
-                "insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)"
+                "insert into x values(cast('2010-02-04T21:43:14.000000Z' as timestamp), 38304)", sqlExecutionContext
         );
 
         TestUtils.assertSql(
@@ -4065,10 +3497,9 @@ public class O3FailureTest extends AbstractO3Test {
                         "2010-02-04T21:43:14.000000Z\t38304\n"
         );
 
-        TestUtils.insert(
+        CairoEngine.insert(
                 compiler,
-                sqlExecutionContext,
-                "insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)"
+                "insert into x values(cast('2010-02-14T23:52:59.000000Z' as timestamp), 40320)", sqlExecutionContext
         );
 
         TestUtils.assertSql(
@@ -4133,7 +3564,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeVanilla(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public FilesFacade getFilesFacade() {
+                public @NotNull FilesFacade getFilesFacade() {
                     return ff;
                 }
             };
@@ -4159,7 +3590,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 final int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, fileName) && counter.decrementAndGet() == 0) {
+                if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     targetFd.set(fd);
                 }
                 return fd;
@@ -4183,7 +3614,7 @@ public class O3FailureTest extends AbstractO3Test {
             @Override
             public int openRW(LPSZ name, long opts) {
                 int fd = super.openRW(name, opts);
-                if (Chars.endsWith(name, fileName)) {
+                if (Utf8s.endsWithAscii(name, fileName)) {
                     targetFd.set(fd);
                 }
                 return fd;
@@ -4192,7 +3623,7 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1, null)) {
+        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
             walApplyJob.drain(0);
             new CheckWalTransactionsJob(engine).run(0);
             // run once again as there might be notifications to handle now

@@ -24,23 +24,25 @@
 
 package io.questdb.test.jit;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.jit.CompiledFilterIRSerializer;
-import io.questdb.test.griffin.BaseFunctionFactoryTest;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import org.junit.*;
 
 import java.util.HashMap;
@@ -108,8 +110,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             writer.commit();
         }
 
-        CompiledQuery query = compiler.compile("select * from x", sqlExecutionContext);
-        factory = query.getRecordCursorFactory();
+        factory = select("select * from x");
         Assert.assertTrue(factory.supportPageFrameCursor());
         metadata = factory.getMetadata();
     }
@@ -206,7 +207,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Map<String, String[]> typeToColumn = new HashMap<>();
         typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
         typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
-        typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
+        typeToColumn.put("i32", new String[]{"anint", "ageoint"/*, "asymbol"*/});
         typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
         typeToColumn.put("i128", new String[]{"auuid", "along128"});
         typeToColumn.put("f32", new String[]{"afloat"});

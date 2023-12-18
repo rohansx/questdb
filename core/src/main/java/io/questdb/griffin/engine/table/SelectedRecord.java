@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 class SelectedRecord implements Record {
@@ -99,6 +100,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public int getIPv4(int col) {
+        return base.getIPv4(getColumnIndex(col));
+    }
+
+    @Override
     public int getInt(int col) {
         return base.getInt(getColumnIndex(col));
     }
@@ -119,7 +125,7 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         base.getLong256(getColumnIndex(col), sink);
     }
 

@@ -25,6 +25,7 @@
 package io.questdb;
 
 import io.questdb.cairo.*;
+import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -113,6 +114,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
         if (telemetryType.shouldLogClasses()) {
             telemetryType.logStatus(writer, getOSClass(), clock.getTicks());
+            telemetryType.logStatus(writer, getEnvTypeClass(), clock.getTicks());
             telemetryType.logStatus(writer, getCpuClass(), clock.getTicks());
             telemetryType.logStatus(writer, getDBSizeClass(engine.getConfiguration()), clock.getTicks());
             telemetryType.logStatus(writer, getTableCountClass(engine), clock.getTicks());
@@ -183,6 +185,11 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
     }
 
+    private static short getEnvTypeClass() {
+        final int type = Os.getEnvironmentType();
+        return (short) (TelemetrySystemEvent.SYSTEM_ENV_TYPE_BASE - type);
+    }
+
     private static short getOSClass() {
         if (Os.isLinux()) {          // 0 - Linux
             return TelemetrySystemEvent.SYSTEM_OS_CLASS_BASE;
@@ -215,7 +222,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
-        SqlCompiler.QueryBuilder getCreateSql(SqlCompiler.QueryBuilder builder);
+        QueryBuilder getCreateSql(QueryBuilder builder);
 
         String getTableName();
 

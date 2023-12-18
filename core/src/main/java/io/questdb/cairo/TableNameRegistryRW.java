@@ -27,14 +27,17 @@ package io.questdb.cairo;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.function.Predicate;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
     private final ConcurrentHashMap<TableToken> nameTableTokenMap = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<ReverseTableMapItem> reverseTableNameTokenMap = new ConcurrentHashMap<>();
 
-    public TableNameRegistryRW(CairoConfiguration configuration) {
-        super(configuration);
-        if (!this.nameStore.lock()) {
+    public TableNameRegistryRW(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+        super(configuration, protectedTableResolver);
+        if (!nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
             }
@@ -44,9 +47,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken addTableAlias(String newName, TableToken tableToken) {
-        TableToken newNameRecord = new TableToken(newName, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
-        TableToken oldToken = nameTableTokenMap.putIfAbsent(newName, newNameRecord);
-        return oldToken == null ? newNameRecord: null;
+        final TableToken newNameRecord = tableToken.renamed(newName);
+        final TableToken oldToken = nameTableTokenMap.putIfAbsent(newName, newNameRecord);
+        return oldToken == null ? newNameRecord : null;
     }
 
     @Override
@@ -66,9 +69,14 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
-        TableToken newNameRecord = new TableToken(tableName, dirName, tableId, isWal);
-        TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
-        return registeredRecord == null ? newNameRecord : null;
+        final TableToken registeredRecord = nameTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
+        if (registeredRecord == null) {
+            boolean isProtected = protectedTableResolver.test(tableName);
+            boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
+            return new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected);
+        } else {
+            return null;
+        }
     }
 
     @Override
@@ -83,13 +91,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
         if (tableToken.isWal()) {
-            nameStore.appendEntry(tableToken);
+            nameStore.logAddTable(tableToken);
         }
         reverseTableNameTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
     }
 
     @Override
-    public synchronized void reloadTableNameCache(ObjList<TableToken> convertedTables) {
+    public synchronized void reloadTableNameCache(@Nullable ObjList<TableToken> convertedTables) {
         nameTableTokenMap.clear();
         reverseTableNameTokenMap.clear();
         if (!nameStore.isLocked()) {
@@ -104,24 +112,15 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public void replaceAlias(TableToken alias, TableToken replaceWith) {
-        if (nameTableTokenMap.remove(alias.getTableName(), alias)) {
-            nameStore.logDropTable(alias);
-            nameStore.appendEntry(replaceWith);
-            reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
-        }
-    }
-
-    @Override
     public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
         String newTableNameStr = Chars.toString(newName);
-        TableToken newNameRecord = new TableToken(newTableNameStr, tableToken.getDirName(), tableToken.getTableId(), tableToken.isWal());
+        TableToken newNameRecord = tableToken.renamed(newTableNameStr);
 
         if (nameTableTokenMap.putIfAbsent(newTableNameStr, newNameRecord) == null) {
             if (nameTableTokenMap.remove(oldName, tableToken)) {
                 // Persist to file
                 nameStore.logDropTable(tableToken);
-                nameStore.appendEntry(newNameRecord);
+                nameStore.logAddTable(newNameRecord);
                 reverseTableNameTokenMap.put(newNameRecord.getDirName(), ReverseTableMapItem.of(newNameRecord));
                 return newNameRecord;
             } else {
@@ -135,8 +134,12 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public void resetMemory() {
-        nameStore.resetMemory();
+    public void replaceAlias(TableToken alias, TableToken replaceWith) {
+        if (nameTableTokenMap.remove(alias.getTableName(), alias)) {
+            nameStore.logDropTable(alias);
+            nameStore.logAddTable(replaceWith);
+            reverseTableNameTokenMap.put(replaceWith.getDirName(), ReverseTableMapItem.of(replaceWith));
+        }
     }
 
     @Override

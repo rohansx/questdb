@@ -82,6 +82,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return nullValue;
     }
 
+    @TestOnly
+    public int getCacheSize() {
+        return cache.size();
+    }
+
     @Override
     public int getSymbolCapacity() {
         return symbolCapacity;
@@ -118,6 +123,10 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return SymbolTable.VALUE_IS_NULL;
     }
 
+    public boolean needsReopen(long columnNameTxn) {
+        return this.columnNameTxn != columnNameTxn;
+    }
+
     public StaticSymbolTable newSymbolTableView() {
         return new SymbolTableView();
     }
@@ -131,7 +140,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         this.columnNameTxn = columnNameTxn;
         this.symbolCount = symbolCount;
         this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
-        final int plen = path.length();
+        final int plen = path.size();
         try {
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
@@ -243,11 +252,6 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
 
     private CharSequence uncachedValue2(int key) {
         return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
-    }
-
-    @TestOnly
-    public int getCacheSize() {
-        return cache.size();
     }
 
     private class SymbolTableView implements StaticSymbolTable {

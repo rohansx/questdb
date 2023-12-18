@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 public class UnionCastRecord extends AbstractUnionRecord {
@@ -147,6 +148,14 @@ public class UnionCastRecord extends AbstractUnionRecord {
     // symbol is not supported by set functions
 
     @Override
+    public int getIPv4(int col) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getIPv4(recordA);
+        }
+        return castFunctionsB.getQuick(col).getIPv4(recordB);
+    }
+
+    @Override
     public int getInt(int col) {
         if (useA) {
             return castFunctionsA.getQuick(col).getInt(recordA);
@@ -179,7 +188,7 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getLong256(int col, CharSink sink) {
+    public void getLong256(int col, CharSinkBase<?> sink) {
         if (useA) {
             castFunctionsA.getQuick(col).getLong256(recordA, sink);
         } else {

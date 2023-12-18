@@ -26,15 +26,19 @@ package io.questdb.std;
 
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.function.BiConsumer;
 
 public final class Misc {
     public static final int CACHE_LINE_SIZE = 64;
     public static final String EOL = "\r\n";
-    private final static ThreadLocal<StringSink> tlBuilder = new ThreadLocal<>(StringSink::new);
+    public static final BiConsumer<CharSequence, ? super Closeable> HASH_MAP_CLEANER = (k, v) -> Misc.free(v);
+    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private final static ThreadLocal<Utf8StringSink> tlUtf8Sink = new ThreadLocal<>(Utf8StringSink::new);
 
     private Misc() {
     }
@@ -79,6 +83,13 @@ public final class Misc {
         return null;
     }
 
+    public static void freeMapAndClear(ConcurrentHashMap<? extends Closeable> map) {
+        if (map != null) {
+            map.forEach(HASH_MAP_CLEANER);
+            map.clear();
+        }
+    }
+
     public static <T extends Closeable> void freeObjList(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
@@ -109,8 +120,14 @@ public final class Misc {
         }
     }
 
-    public static StringSink getThreadLocalBuilder() {
-        StringSink b = tlBuilder.get();
+    public static StringSink getThreadLocalSink() {
+        StringSink b = tlSink.get();
+        b.clear();
+        return b;
+    }
+
+    public static Utf8StringSink getThreadLocalUtf8Sink() {
+        Utf8StringSink b = tlUtf8Sink.get();
         b.clear();
         return b;
     }

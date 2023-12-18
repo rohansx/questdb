@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.DataUnavailableException;
+
 import java.io.Closeable;
 
 /**
@@ -33,6 +35,47 @@ import java.io.Closeable;
  * close() method must be called after other calls are complete.
  */
 public interface RecordCursor extends Closeable, SymbolTableSource {
+
+    static void calculateSize(RecordCursor cursor, SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (circuitBreaker != null) {
+            while (cursor.hasNext()) {
+                counter.inc();
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+        } else {
+            while (cursor.hasNext()) {
+                counter.inc();
+            }
+        }
+    }
+
+    static void skipRows(RecordCursor cursor, Counter rowCount) throws DataUnavailableException {
+        while (rowCount.get() > 0 && cursor.hasNext()) {
+            rowCount.dec();
+        }
+    }
+
+    /**
+     * Counts remaining number of records in this cursor, moving the cursor to the end.
+     * <p>
+     * Note - this method should handle return correct result even it's interrupted by {@link DataUnavailableException}
+     * The number of rows counted so far is kept in the counter parameter.
+     *
+     * @param circuitBreaker - circuit breaker to use to check for timeouts or stale connection.
+     * @param counter        - counter to store partial or complete result
+     */
+    default void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        if (circuitBreaker != null) {
+            while (hasNext()) {
+                counter.inc();
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+        } else {
+            while (hasNext()) {
+                counter.inc();
+            }
+        }
+    }
 
     /**
      * RecordCursor must be closed after other method calls are finished.
@@ -67,7 +110,7 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * @return true if more records may be accessed, otherwise false
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    boolean hasNext();
+    boolean hasNext() throws DataUnavailableException;
 
     /**
      * Returns true if the cursor is using an index, false otherwise
@@ -102,22 +145,23 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * indicated there are no more records to access.
      *
      * @return size of records available to the cursor
-     */
-    long size();
-
-    /**
-     * Tries to position the record at the given row count to skip in an efficient way.
-     * Rows are counted top of table.
-     * <p>
-     * Supported by some record cursors that support random access (e.g. tables ordered by
-     * designated timestamp).
-     *
-     * @param rowCount row count to skip down the cursor
-     * @return true if a fast skip is supported by the cursor and was executed, false otherwise
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    default boolean skipTo(long rowCount) {
-        return false;
+    long size() throws DataUnavailableException;
+
+    /**
+     * Tries to position the record at the given row count (relative to current position) to skip in an efficient way.
+     * Rows are counted top of table.
+     * <p>
+     * Supported by some record cursors that support random access (e.g. tables ordered by designated timestamp).
+     *
+     * @param rowCount number of rows to skip down the cursor; method subtracts the number of actually skipped rows from argument
+     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
+     */
+    default void skipRows(Counter rowCount) throws DataUnavailableException {
+        while (rowCount.get() > 0 && hasNext()) {
+            rowCount.dec();
+        }
     }
 
     /**
@@ -125,4 +169,36 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      * Sets location to first column.
      */
     void toTop();
+
+    class Counter {
+        private long value;
+
+        public void add(long val) {
+            value += val;
+        }
+
+        public void clear() {
+            value = 0;
+        }
+
+        public void dec() {
+            value--;
+        }
+
+        public void dec(long val) {
+            value -= val;
+        }
+
+        public long get() {
+            return value;
+        }
+
+        public void inc() {
+            value++;
+        }
+
+        public void set(long val) {
+            value = val;
+        }
+    }
 }

@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -32,10 +32,11 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-public class TableReaderMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Mutable {
+public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
+    private boolean isSoftLink;
     private int maxUncommittedRows;
     private MemoryMR metaMem;
     private int metadataVersion;
@@ -52,8 +53,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableToken = tableToken;
-        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getDirName());
-        this.plen = path.length();
+        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getDirName()).$();
+        this.plen = path.size();
+        this.isSoftLink = Files.isSoftLink(path);
         this.metaMem = Vm.getMRInstance();
     }
 
@@ -92,6 +94,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             assert name != null;
             int columnType = TableUtils.getColumnType(metaMem, metaIndex);
             boolean isIndexed = TableUtils.isColumnIndexed(metaMem, metaIndex);
+            boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, metaIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, metaIndex);
             TableColumnMetadata existing = null;
             String newName;
@@ -117,6 +120,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         || existing == null
                         || existing.isIndexed() != isIndexed
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
+                        || existing.isDedupKey() != isDedupKey
                 ) {
                     columnMetadata.setQuick(existingIndex - shiftLeft,
                             new TableColumnMetadata(
@@ -126,7 +130,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     indexBlockCapacity,
                                     true,
                                     null,
-                                    metaIndex
+                                    metaIndex,
+                                    isDedupKey
+
                             )
                     );
                 } else if (shiftLeft > 0) {
@@ -189,11 +195,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -208,6 +209,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return o3MaxLag;
     }
 
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }
@@ -222,6 +224,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return tableToken;
     }
 
+    public boolean isSoftLink() {
+        return isSoftLink;
+    }
+
+    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }
@@ -257,7 +264,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     TableUtils.getIndexBlockCapacity(metaMem, i),
                                     true,
                                     null,
-                                    i
+                                    i,
+                                    TableUtils.isColumnDedupKey(metaMem, i)
                             )
                     );
                     if (i == timestampIndex) {

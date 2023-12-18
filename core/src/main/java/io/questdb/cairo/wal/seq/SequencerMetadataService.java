@@ -24,9 +24,10 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.std.Chars;
+import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
 
 public class SequencerMetadataService implements MetadataServiceStub {
@@ -46,9 +47,20 @@ public class SequencerMetadataService implements MetadataServiceStub {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential
+            boolean isSequential,
+            SecurityContext securityContext
     ) {
         metadata.addColumn(name, type);
+    }
+
+    @Override
+    public void disableDeduplication() {
+        metadata.disableDeduplication();
+    }
+
+    @Override
+    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        metadata.enableDeduplicationWithUpsertKeys();
     }
 
     public TableRecordMetadata getMetadata() {
@@ -66,14 +78,13 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
+    public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         metadata.renameColumn(columnName, newName);
     }
 
     @Override
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
-        assert Chars.equalsIgnoreCaseNc(fromNameTable, metadata.getTableToken().getTableName());
         metadata.renameTable(toTableName);
-        this.tableToken = metadata.getTableToken();
+        tableToken = metadata.getTableToken();
     }
 }

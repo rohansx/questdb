@@ -26,22 +26,21 @@ package io.questdb.test.cutlass.text;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.text.*;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.std.str.Utf8String;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -52,17 +51,19 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class TextLoaderTest extends AbstractGriffinTest {
+public class TextLoaderTest extends AbstractCairoTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
     private static final String PATH_SEP_REGEX = Os.isWindows() ?
             String.format("[%c%c]", Files.SEPARATOR, Files.SEPARATOR) : String.valueOf(Files.SEPARATOR);
+    private static final Utf8String TEST_TABLE_NAME = new Utf8String("test");
+    private static final Utf8String TEST_TS_COL_NAME = new Utf8String("ts");
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
 
     @AfterClass
     public static void tearDownClass() throws Exception {
         jsonLexer.close();
-        AbstractGriffinTest.tearDownStatic();
+        AbstractCairoTest.tearDownStatic();
     }
 
     @After
@@ -493,18 +494,21 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 180_000_000,
                 721,
                 180_000_000,
-                721);
+                721
+        );
     }
 
     @Test
     public void testCanUpdateO3MaxLagAndMaxUncommittedRowsToZeroIfTableExistsAndOverwriteIsTrue() throws Exception {
-        importWithO3MaxLagAndMaxUncommittedRowsTableExists("partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
+        importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+                "partition by DAY with maxUncommittedRows = 2, o3MaxLag = 2s",
                 true,
                 PartitionBy.DAY,
                 0,
                 0,
                 0,
-                0);
+                0
+        );
     }
 
     @Test
@@ -523,7 +527,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -535,8 +539,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             ", h long" +
                             ", i boolean" +
                             ", k long" +
-                            ", t timestamp)",
-                    sqlExecutionContext
+                            ", t timestamp)"
             );
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
@@ -545,7 +548,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Could not lock");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
                 }
             }
         });
@@ -560,7 +563,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 180_000_000,
                 721,
                 2_000_000,
-                2);
+                2
+        );
     }
 
     @Test
@@ -705,7 +709,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testDateFormatNoLocale() throws Exception {
-        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.enLocale;
+        DateLocale locale = io.questdb.std.datetime.millitime.DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -968,7 +972,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public TextConfiguration getTextConfiguration() {
+                public @NotNull TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -1096,22 +1100,22 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    compiler.compile("create table test(" +
-                                    "ts timestamp, " +
-                                    "byte byte, " +
-                                    "short short," +
-                                    "char char," +
-                                    "int int," +
-                                    "long long," +
-                                    "boolean boolean," +
-                                    "float float," +
-                                    "double double," +
-                                    "string string," +
-                                    "symbol symbol," +
-                                    "long256 long256," +
-                                    "timestamp timestamp," +
-                                    "date date) timestamp(ts) partition by NONE",
-                            sqlExecutionContext);
+                    ddl("create table test(" +
+                            "ts timestamp, " +
+                            "byte byte, " +
+                            "short short," +
+                            "char char," +
+                            "int int," +
+                            "long long," +
+                            "boolean boolean," +
+                            "float float," +
+                            "double double," +
+                            "string string," +
+                            "symbol symbol," +
+                            "long256 long256," +
+                            "timestamp timestamp," +
+                            "date date) timestamp(ts) partition by NONE"
+                    );
 
                     String expectedMetadata = "{\"columnCount\":14,\"columns\":[" +
                             "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"}," +
@@ -1147,7 +1151,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             PartitionBy.NONE
                     );
                     textLoader.setForceHeaders(true);
-                    playText(engine,
+                    playText(
+                            engine,
                             textLoader,
                             csv,
                             1024,
@@ -1157,7 +1162,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             3,
                             true
                     );
-                });
+                }
+        );
     }
 
     @Test
@@ -1165,7 +1171,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    compiler.compile("create table test(ts timestamp) timestamp(ts) partition by NONE", sqlExecutionContext);
+                    ddl("create table test(ts timestamp) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = "ts\n" +
@@ -1178,7 +1184,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 PartitionBy.NONE
                         );
                         textLoader.setForceHeaders(true);
-                        playText(engine,
+                        playText(
+                                engine,
                                 textLoader,
                                 csv,
                                 1024,
@@ -1192,7 +1199,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     } catch (TextException expected) {
                         Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1200,7 +1208,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         assertNoLeak(
                 engine,
                 textLoader -> {
-                    compiler.compile("create table test(ts timestamp) timestamp(ts) partition by NONE", sqlExecutionContext);
+                    ddl("create table test(ts timestamp) timestamp(ts) partition by NONE");
 
                     try {
                         String csv = "ts\n" +
@@ -1213,7 +1221,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 PartitionBy.NONE
                         );
                         textLoader.setForceHeaders(true);
-                        playText(engine,
+                        playText(
+                                engine,
                                 textLoader,
                                 csv,
                                 1024,
@@ -1227,7 +1236,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     } catch (TextException expected) {
                         Assert.assertEquals("not a timestamp 'ts'", expected.getMessage());
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -1241,7 +1251,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1313,7 +1323,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 23,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -1322,7 +1333,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 240_000_000, // 4 minutes, precision is micro
                 3,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1")
+                setOf("2021-01-01", "2021-01-01.1", "2021-01-01.3", "2021-01-02", "2021-01-02.2", "2021-01-02.3")
         );
     }
 
@@ -1331,7 +1342,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         importWithO3MaxLagAndMaxUncommittedRowsTableNotExists(
                 60_000_000, // 1 minute, precision is micro
                 2,
-                setOf("2021-01-01.2", "2021-01-01.1", "2021-01-01.4", "2021-01-02.1", "2021-01-02.2", "2021-01-02.4")
+                setOf("2021-01-01", "2021-01-01.1", "2021-01-01.2", "2021-01-01.4", "2021-01-01.6", "2021-01-02.0", "2021-01-02.1", "2021-01-02.5")
         );
     }
 
@@ -1346,7 +1357,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1382,7 +1393,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 5,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -1407,7 +1419,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -1496,7 +1508,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                 @Override
-                public TextConfiguration getTextConfiguration() {
+                public @NotNull TextConfiguration getTextConfiguration() {
                     return textConfiguration;
                 }
             };
@@ -1733,6 +1745,26 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
             Assert.fail();
         });
+    }
+
+    @Test
+    public void testO3MaxLagAndMaxUncommittedRowsNewTableNonPartitioned() throws Exception {
+        testO3MaxLagAndMaxUncommittedRowsNewTable(
+                "",
+                PartitionBy.NONE,
+                -1,
+                -1
+        );
+    }
+
+    @Test
+    public void testO3MaxLagAndMaxUncommittedRowsNewTablePartitioned() throws Exception {
+        testO3MaxLagAndMaxUncommittedRowsNewTable(
+                "partition by day",
+                PartitionBy.DAY,
+                configuration.getMaxUncommittedRows(),
+                configuration.getO3MaxLag()
+        );
     }
 
     @Test
@@ -2019,7 +2051,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -2031,8 +2063,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             ", h long" +
                             ", i boolean" +
                             ", k long" +
-                            ", t timestamp)",
-                    sqlExecutionContext
+                            ", t timestamp)"
             );
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);
@@ -2070,7 +2101,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
@@ -2106,7 +2137,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 4,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -2435,7 +2467,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     @Test
     public void testTimestampFormatNoLocale() throws Exception {
-        DateLocale locale = DateFormatUtils.enLocale;
+        DateLocale locale = DateFormatUtils.EN_LOCALE;
         assertNoLeak(textLoader -> {
             String csv = "\"name\",\"date\"\n" +
                     "\"Всероссийские спортивные соревнования школьников «ПРЕЗИДЕНТСКИЕ СОСТЯЗАНИЯ»\",\"3 " + locale.getMonth(6) + " 2017 г.\"\n" +
@@ -2478,7 +2510,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 180_000_000,
                 721,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -2490,7 +2523,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 -1,
                 -1,
                 300000000,
-                1000);
+                1000
+        );
     }
 
     @Test
@@ -2699,9 +2733,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "2\t1\n" +
                     "2\t1\n";
 
-            compiler.compile("create table test (col_a int, col_b long)", sqlExecutionContext);
-            compile(compiler, "alter table test drop column col_a", sqlExecutionContext);
-            compile(compiler, "alter table test add column col_a long", sqlExecutionContext);
+            ddl("create table test (col_a int, col_b long)");
+            ddl("alter table test drop column col_a");
+            ddl("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -2725,9 +2759,9 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "1\t2\n" +
                     "1\t2\n";
 
-            compiler.compile("create table test (col_a int, col_b long)", sqlExecutionContext);
-            compile(compiler, "alter table test drop column col_a", sqlExecutionContext);
-            compile(compiler, "alter table test add column col_a long", sqlExecutionContext);
+            ddl("create table test (col_a int, col_b long)");
+            ddl("alter table test drop column col_a");
+            ddl("alter table test add column col_a long");
 
             configureLoaderDefaults(textLoader);
             playText(
@@ -2795,14 +2829,15 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            compiler.compile("create table test(a string, d binary)", sqlExecutionContext);
+            ddl("create table test(a string, d binary)");
             configureLoaderDefaults(textLoader);
             try {
                 playText(textLoader, csv, 1024,
                         expected,
                         "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                         3,
-                        3);
+                        3
+                );
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot import text into BINARY column");
@@ -2823,13 +2858,14 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t1970-01-01T00:00:00.000045Z\n" +
                     "werop\t1970-01-01T00:00:00.000090Z\n";
 
-            compiler.compile("create table test(a string, b timestamp)", sqlExecutionContext);
+            ddl("create table test(a string, b timestamp)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"TIMESTAMP\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -2846,13 +2882,14 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t\n" +
                     "werop\t\n";
 
-            compiler.compile("create table test(a string, b date)", sqlExecutionContext);
+            ddl("create table test(a string, b date)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
                     "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DATE\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
     }
 
@@ -2869,12 +2906,11 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(t date" +
                             ", s symbol" +
-                            ", v double)",
-                    sqlExecutionContext
+                            ", v double)"
             );
             configureLoaderDefaults(textLoader);
             playText(
@@ -2902,7 +2938,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "bad_data,GOOG,15\n" +
                     "bad_data,GOOG,20\n";
 
-            compiler.compile("create table test (t timestamp, s symbol, v double)", sqlExecutionContext);
+            ddl("create table test (t timestamp, s symbol, v double)");
             configureLoaderDefaults(textLoader);
             playText(
                     textLoader,
@@ -2929,14 +2965,13 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "2019-11-12T00:00:00.000Z,GOOG,2019-11-12T00:00:00.000Z,2019-11-12T00:00:00.000Z,15\n" +
                     "2019-11-13T00:00:00.000Z,GOOG,2019-11-13T00:00:00.000Z,2019-11-13T00:00:00.000Z,20\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(t1 timestamp" +
                             ", s symbol" +
                             ", t2 timestamp" +
                             ", t3 timestamp" +
-                            ", v double)",
-                    sqlExecutionContext
+                            ", v double)"
             );
             configureLoaderDefaults(textLoader);
             playText(
@@ -2967,7 +3002,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile("create table test(a int, b int)", sqlExecutionContext);
+            ddl("create table test(a int, b int)");
             configureLoaderDefaults(textLoader);
             try {
                 playText0(textLoader, csv, 1024, ENTITY_MANIPULATOR);
@@ -3008,7 +3043,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "CMP2,2,4770,2.85092033445835,2015-02-08T19:15:09.000Z,2015-02-08 19:15:09,02/08/2015,253,TRUE,33766814\n" +
                     "CMP1,5,4938,4.42754498450086,2015-02-09T19:15:09.000Z,2015-02-09 19:15:09,02/09/2015,7817,FALSE,61983099\n";
 
-            compiler.compile(
+            ddl(
                     "create table test" +
                             "(a symbol" +
                             ", b int" +
@@ -3020,8 +3055,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
                             ", h long" +
                             ", i boolean" +
                             ", k long" +
-                            ", t timestamp)",
-                    sqlExecutionContext
+                            ", t timestamp)"
             );
             configureLoaderDefaults(textLoader);
             playText(
@@ -3048,77 +3082,21 @@ public class TextLoaderTest extends AbstractGriffinTest {
                     "efg\t45\t\n" +
                     "werop\t90\t\n";
 
-            compiler.compile("create table test(a string, b int, d binary)", sqlExecutionContext);
+            ddl("create table test(a string, b int, d binary)");
             configureLoaderDefaults(textLoader);
             playText(textLoader, csv, 1024,
                     expected,
                     "{\"columnCount\":3,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"INT\"},{\"index\":2,\"name\":\"d\",\"type\":\"BINARY\"}],\"timestampIndex\":-1}",
                     3,
-                    3);
+                    3
+            );
         });
-    }
-
-    private static void assertTable(String expected) throws SqlException {
-        refreshTablesInBaseEngine();
-        TestUtils.assertSql(
-                compiler,
-                sqlExecutionContext,
-                "test",
-                sink,
-                expected
-        );
-    }
-
-    private static void compile(SqlCompiler compiler, CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-        CompiledQuery cc = compiler.compile(query, executionContext);
-        try (OperationFuture future = cc.execute(null)) {
-            future.await();
-        }
     }
 
     private static String extractLast(Path path) {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);
         return pathElements[pathElements.length - 1];
-    }
-
-    private static void playText(
-            CairoEngine engine,
-            TextLoader textLoader,
-            String text,
-            final int firstBufSize,
-            String expected,
-            ByteManipulator manipulator,
-            CharSequence expectedMetadata,
-            long expectedParsedLineCount,
-            long expectedWrittenLineCount,
-            boolean skipLinesWithExtraValues
-    ) throws Exception {
-        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
-        boolean forceHeader = textLoader.isForceHeaders();
-        byte delimiter = textLoader.getColumnDelimiter();
-        playText0(textLoader, text, firstBufSize, manipulator);
-        sink.clear();
-        textLoader.getMetadata().toJson(sink);
-        TestUtils.assertEquals(expectedMetadata, sink);
-        Assert.assertEquals("parsed line count", expectedParsedLineCount, textLoader.getParsedLineCount());
-        Assert.assertEquals("written line count", expectedWrittenLineCount, textLoader.getWrittenLineCount());
-        assertTable(expected);
-        textLoader.clear();
-
-        try (TableWriter writer = getWriter(engine, "test")) {
-            writer.truncate();
-        }
-
-        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
-        textLoader.setForceHeaders(forceHeader);
-        if (delimiter > 0) {
-            textLoader.configureColumnDelimiter(delimiter);
-        }
-        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        playText0(textLoader, text, firstBufSize, manipulator);
-        assertTable(expected);
-        textLoader.clear();
     }
 
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteManipulator manipulator) throws TextException {
@@ -3218,7 +3196,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             Assert.assertEquals(0, engine.getBusyWriterCount());
             Assert.assertEquals(0, engine.getBusyReaderCount());
             engine.clear();
-            AbstractGriffinTest.engine.clear();
+            AbstractCairoTest.engine.clear();
         });
     }
 
@@ -3232,13 +3210,12 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return textConfiguration;
             }
         };
         try (CairoEngine engine = new CairoEngine(configuration)) {
-
-            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compile("create table test(StrSym symbol, ts timestamp) " + nominatedTimestamp, sqlExecutionContext);
                 engine.releaseAllWriters();
             }
@@ -3252,7 +3229,6 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 "CMP1\t1970-04-26T17:46:40.000002Z\n" +
                                 "CMP2\t1970-04-26T17:46:40.000003Z\n" +
                                 "CMP1\t1970-04-26T17:46:40.000004Z\n";
-
 
                         String csv = "StrSym,ts\n" +
                                 "CMP1,10000000000000\n" +
@@ -3274,7 +3250,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
                                 5,
                                 true
                         );
-                    });
+                    }
+            );
         }
     }
 
@@ -3292,7 +3269,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, byte columnSeparator, int atomicity, boolean overwrite) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, PartitionBy.NONE, null, null);
+        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, PartitionBy.NONE, null, null);
         if (columnSeparator > 0) {
             textLoader.configureColumnDelimiter(columnSeparator);
         }
@@ -3300,27 +3277,29 @@ public class TextLoaderTest extends AbstractGriffinTest {
 
     private void configureLoaderDefaults(TextLoader textLoader, int atomicity, boolean overwrite, int partitionBy) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", overwrite, atomicity, partitionBy, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, overwrite, atomicity, partitionBy, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
     private void configureLoaderDefaults2(TextLoader textLoader) {
         textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
-        textLoader.configureDestination("test", false, Atomicity.SKIP_COL, PartitionBy.DAY, "ts", null);
+        textLoader.configureDestination(TEST_TABLE_NAME, false, Atomicity.SKIP_COL, PartitionBy.DAY, TEST_TS_COL_NAME, null);
         textLoader.configureColumnDelimiter((byte) 44);
     }
 
-    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(String createStmtExtra,
-                                                                    boolean overwrite,
-                                                                    int partitionBy,
-                                                                    long o3MaxLagUs,
-                                                                    int maxUncommittedRows,
-                                                                    long expectedO3MaxLag,
-                                                                    int expectedMaxUncommittedRows) throws Exception {
+    private void importWithO3MaxLagAndMaxUncommittedRowsTableExists(
+            String createStmtExtra,
+            boolean overwrite,
+            int partitionBy,
+            long o3MaxLagUs,
+            int maxUncommittedRows,
+            long expectedO3MaxLag,
+            int expectedMaxUncommittedRows
+    ) throws Exception {
         assertNoLeak(
                 textLoader -> {
                     String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
-                    compiler.compile(createStmt, sqlExecutionContext);
+                    ddl(createStmt);
                     configureLoaderDefaults(
                             textLoader,
                             Atomicity.SKIP_ROW,
@@ -3363,26 +3342,24 @@ public class TextLoaderTest extends AbstractGriffinTest {
             Set<String> expectedPartitionNames
     ) throws Exception {
         final AtomicInteger rmdirCallCount = new AtomicInteger();
-        final AtomicInteger msyncCallCount = new AtomicInteger();
 
         final FilesFacade ff = new TestFilesFacade() {
             @Override
             public void msync(long addr, long len, boolean async) {
-                msyncCallCount.incrementAndGet();
                 Assert.assertFalse(async);
                 Files.msync(addr, len, false);
             }
 
             @Override
-            public int rmdir(Path name) {
+            public boolean rmdir(Path name, boolean lazy) {
                 final String dirName = extractLast(name);
                 if (!dirName.equals("seq")) {
                     rmdirCallCount.getAndIncrement();
                     if (!expectedPartitionNames.contains(dirName)) {
-                        Assert.fail();
+                        Assert.fail(dirName + " not expected");
                     }
                 }
-                return Files.rmdir(name);
+                return super.rmdir(name, lazy);
             }
 
             @Override
@@ -3392,7 +3369,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
         };
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
-            public FilesFacade getFilesFacade() {
+            public @NotNull FilesFacade getFilesFacade() {
                 return ff;
             }
 
@@ -3407,7 +3384,7 @@ public class TextLoaderTest extends AbstractGriffinTest {
             }
 
             @Override
-            public TextConfiguration getTextConfiguration() {
+            public @NotNull TextConfiguration getTextConfiguration() {
                 return new DefaultTextConfiguration() {
                     @Override
                     public int getTextAnalysisMaxLines() {
@@ -3482,6 +3459,49 @@ public class TextLoaderTest extends AbstractGriffinTest {
     }
 
     private void playText(
+            CairoEngine engine,
+            TextLoader textLoader,
+            String text,
+            final int firstBufSize,
+            String expected,
+            ByteManipulator manipulator,
+            CharSequence expectedMetadata,
+            long expectedParsedLineCount,
+            long expectedWrittenLineCount,
+            boolean skipLinesWithExtraValues
+    ) throws Exception {
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        boolean forceHeader = textLoader.isForceHeaders();
+        byte delimiter = textLoader.getColumnDelimiter();
+        int maxUncommittedRows = textLoader.getMaxUncommittedRows();
+        long o3MaxLag = textLoader.getO3MaxLag();
+        playText0(textLoader, text, firstBufSize, manipulator);
+        sink.clear();
+        textLoader.getMetadata().toJson(sink);
+        TestUtils.assertEquals(expectedMetadata, sink);
+        Assert.assertEquals("parsed line count", expectedParsedLineCount, textLoader.getParsedLineCount());
+        Assert.assertEquals("written line count", expectedWrittenLineCount, textLoader.getWrittenLineCount());
+        assertTable(expected);
+        textLoader.clear();
+
+        try (TableWriter writer = getWriter(engine, "test")) {
+            writer.truncate();
+        }
+
+        textLoader.setSkipLinesWithExtraValues(skipLinesWithExtraValues);
+        textLoader.setForceHeaders(forceHeader);
+        textLoader.setMaxUncommittedRows(maxUncommittedRows);
+        textLoader.setO3MaxLag(o3MaxLag);
+        if (delimiter > 0) {
+            textLoader.configureColumnDelimiter(delimiter);
+        }
+        textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+        playText0(textLoader, text, firstBufSize, manipulator);
+        assertTable(expected);
+        textLoader.clear();
+    }
+
+    private void playText(
             TextLoader textLoader,
             String text,
             final int firstBufSize,
@@ -3491,7 +3511,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             long expectedWrittenLineCount,
             boolean skipLinesWithExtraValues
     ) throws Exception {
-        playText(engine,
+        playText(
+                engine,
                 textLoader,
                 text,
                 firstBufSize,
@@ -3512,7 +3533,8 @@ public class TextLoaderTest extends AbstractGriffinTest {
             long expectedParsedLineCount,
             long expectedWrittenLineCount
     ) throws Exception {
-        playText(engine,
+        playText(
+                engine,
                 textLoader,
                 text,
                 firstBufSize,
@@ -3547,6 +3569,48 @@ public class TextLoaderTest extends AbstractGriffinTest {
                 expectedWrittenLineCount,
                 skipLinesWithExtraValues
         );
+    }
+
+    private void testO3MaxLagAndMaxUncommittedRowsNewTable(
+            String createStmtExtra,
+            int partitionBy,
+            int expectedMaxUncommittedRows,
+            long expectedO3MaxLag
+    ) throws Exception {
+        assertNoLeak(
+                textLoader -> {
+                    String createStmt = "create table test(ts timestamp, int int) timestamp(ts) " + createStmtExtra;
+                    ddl(createStmt);
+                    configureLoaderDefaults(
+                            textLoader,
+                            Atomicity.SKIP_ROW,
+                            false,
+                            partitionBy
+                    );
+                    textLoader.setForceHeaders(true);
+                    textLoader.setState(TextLoader.ANALYZE_STRUCTURE);
+                    playText0(
+                            textLoader,
+                            "ts,int\n" +
+                                    "2021-01-02T00:00:30.000000Z,1\n",
+                            512,
+                            ENTITY_MANIPULATOR
+                    );
+
+                    assertTable("ts\tint\n" +
+                            "2021-01-02T00:00:30.000000Z\t1\n");
+
+                    Assert.assertEquals("test", textLoader.getTableName());
+                    Assert.assertEquals(TextLoadWarning.NONE, textLoader.getWarnings());
+                    Assert.assertEquals(expectedMaxUncommittedRows, textLoader.getMaxUncommittedRows());
+                    Assert.assertEquals(expectedO3MaxLag, textLoader.getO3MaxLag());
+                }
+        );
+    }
+
+    protected void assertTable(String expected) throws SqlException {
+        refreshTablesInBaseEngine();
+        assertSql(expected, "test");
     }
 
     @FunctionalInterface

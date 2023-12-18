@@ -79,10 +79,19 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static class CountRecordCursor implements NoRandomAccessRecordCursor {
         private final CountRecord countRecord = new CountRecord();
+        private final RecordCursor.Counter counter = new Counter();
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;
         private boolean hasNext = true;
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            if (hasNext) {
+                counter.add(1);
+                hasNext = false;
+            }
+        }
 
         @Override
         public void close() {
@@ -96,14 +105,14 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (baseCursor != null) {
-                while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    count++;
-                }
-                baseCursor = Misc.free(baseCursor);
-            }
             if (hasNext) {
+                long size = baseCursor.size();
+                if (size > -1) {
+                    count = size;
+                } else {
+                    baseCursor.calculateSize(circuitBreaker, counter);
+                    count = counter.get();
+                }
                 hasNext = false;
                 return true;
             }
@@ -117,20 +126,15 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void toTop() {
+            baseCursor.toTop();
             hasNext = true;
+            count = 0;
+            counter.clear();
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.baseCursor = baseCursor;
             this.circuitBreaker = circuitBreaker;
-
-            final long size = baseCursor.size();
-            if (size < 0) {
-                count = 0;
-            } else {
-                count = size;
-                this.baseCursor = Misc.free(baseCursor);
-            }
             toTop();
         }
 

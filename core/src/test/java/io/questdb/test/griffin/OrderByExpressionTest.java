@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.test.AbstractGriffinTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Ignore;
 import org.junit.Test;
 
-public class OrderByExpressionTest extends AbstractGriffinTest {
+public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByColumnInJoinedSubquery() throws Exception {
@@ -96,6 +96,67 @@ public class OrderByExpressionTest extends AbstractGriffinTest {
                         ")\n" +
                         "order by x*2 asc, ext desc\n" +
                         "limit 3", null, null, true, false);
+    }
+
+    @Test
+    public void testOrderByExpressionWithDuplicatesMaintainsOriginalOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab as (select x x, x%2 y from long_sequence(10))");
+
+            assertQuery("x\ty\n" +
+                            "1\t1\n" +
+                            "2\t0\n" +
+                            "3\t1\n" +
+                            "4\t0\n" +
+                            "5\t1\n" +
+                            "6\t0\n" +
+                            "7\t1\n" +
+                            "8\t0\n" +
+                            "9\t1\n" +
+                            "10\t0\n",
+                    "select * from tab order by x/x", null, true, true);
+
+            assertQuery("x\ty\n" +
+                            "2\t0\n" +
+                            "4\t0\n" +
+                            "6\t0\n" +
+                            "8\t0\n" +
+                            "10\t0\n" +
+                            "1\t1\n" +
+                            "3\t1\n" +
+                            "5\t1\n" +
+                            "7\t1\n" +
+                            "9\t1\n",
+                    "select * from tab order by y", null, true, true);
+
+            assertQuery("x\ty\n" +
+                            "2\t0\n" +
+                            "4\t0\n" +
+                            "6\t0\n" +
+                            "8\t0\n" +
+                            "10\t0\n" +
+                            "1\t1\n" +
+                            "3\t1\n" +
+                            "5\t1\n" +
+                            "7\t1\n" +
+                            "9\t1\n",
+                    "select * from (select t2.* from tab t1 cross join tab t2 limit 10) order by y",
+                    null, true, true);
+
+            assertQuery("x\ty\n" +
+                            "1\t1\n" +
+                            "2\t0\n" +
+                            "3\t1\n" +
+                            "4\t0\n" +
+                            "5\t1\n" +
+                            "6\t0\n" +
+                            "7\t1\n" +
+                            "8\t0\n" +
+                            "9\t1\n" +
+                            "10\t0\n",
+                    "select * from (select t2.* from tab t1 cross join tab t2 limit 10) order by x/x",
+                    null, true, true);
+        });
     }
 
     @Test

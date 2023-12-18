@@ -24,7 +24,9 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -123,6 +125,10 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         return list.getLast();
     }
 
+    public ObjList<CharSequence> getList() {
+        return list;
+    }
+
     public int getListIndexAt(int keyIndex) {
         int index = -keyIndex - 1;
         return list.indexOf(keys[index]);
@@ -130,6 +136,10 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
 
     public int getListIndexOf(CharSequence cs) {
         return getListIndexAt(keyIndex(cs));
+    }
+
+    public boolean hasNull() {
+        return hasNull;
     }
 
     public CharSequence keyAt(int index) {
@@ -172,7 +182,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     }
 
     @Override
-    public void toSink(CharSink sink) {
+    public void toSink(@NotNull CharSinkBase<?> sink) {
         sink.put(list);
     }
 

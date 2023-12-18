@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.CharSinkBase;
 
 /**
  * Access the value of columns of a table record by column index.
@@ -162,6 +163,18 @@ public interface Record {
     }
 
     /**
+     * Gets the value of an IPv4 column by index
+     * Distinct from getInt(int col) because INT and IPv4 have different null values
+     *
+     * @param col numeric index of the column
+     * @return 32-bit integer
+     */
+
+    default int getIPv4(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Gets the value of an integer column by index
      *
      * @param col numeric index of the column
@@ -193,9 +206,9 @@ public interface Record {
      * Gets the value of a long256 column by index
      *
      * @param col  numeric index of the column
-     * @param sink a character sink
+     * @param sink an ASCII sink
      */
-    default void getLong256(int col, CharSink sink) {
+    default void getLong256(int col, CharSinkBase<?> sink) {
         throw new UnsupportedOperationException();
     }
 
@@ -218,6 +231,18 @@ public interface Record {
      * @return unsigned 256-bit integer
      */
     default Long256 getLong256B(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets the value of an IPv4 column by index as a long (only needed for sorting)
+     * Distinct from getInt(int col) because INT and IPv4 have different null values
+     *
+     * @param col numeric index of the column
+     * @return 64-bit integer
+     */
+
+    default long getLongIPv4(int col) {
         throw new UnsupportedOperationException();
     }
 

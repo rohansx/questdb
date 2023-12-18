@@ -31,13 +31,16 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.ObjObjHashMap;
+import org.jetbrains.annotations.Nullable;
 
 public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
+
+    FactoryProvider getFactoryProvider();
 
     HttpMinServerConfiguration getHttpMinServerConfiguration();
 
@@ -55,8 +58,10 @@ public interface ServerConfiguration {
 
     WorkerPoolConfiguration getWorkerPoolConfiguration();
 
-    FactoryProvider getFactoryProvider();
+    default void init(CairoEngine engine, FreeOnExit freeOnExit) {
+    }
 
-    default void init(CairoEngine engine, FunctionFactoryCache functionFactoryCache) {
+    default boolean isLineTcpEnabled() {
+        return true;
     }
 }

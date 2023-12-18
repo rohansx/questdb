@@ -90,11 +90,6 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
-    public long getAddress() {
-        return currentValueOffset;
-    }
-
-    @Override
     public boolean getBool(int index) {
         return entries.getBool(getValueColumnOffset(index));
     }
@@ -145,6 +140,11 @@ public class CompactMapValue implements MapValue {
     }
 
     @Override
+    public int getIPv4(int columnIndex) {
+        return entries.getIPv4(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
     public int getInt(int columnIndex) {
         return entries.getInt(getValueColumnOffset(columnIndex));
     }
@@ -179,6 +179,11 @@ public class CompactMapValue implements MapValue {
     @Override
     public short getShort(int columnIndex) {
         return entries.getShort(getValueColumnOffset(columnIndex));
+    }
+
+    @Override
+    public long getStartAddress() {
+        return currentValueOffset;
     }
 
     @Override

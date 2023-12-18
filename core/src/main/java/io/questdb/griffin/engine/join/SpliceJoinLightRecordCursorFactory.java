@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -54,17 +53,14 @@ import io.questdb.std.Transient;
  * splice join optionally join on "tags", which in above example is currency pair field.
  * The join result will match rows where value of currency pair is the same.
  */
-public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFactory {
+public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final long NULL_ROWID = -1;
     private static final int VAL_MASTER_NEXT = 1;
     private static final int VAL_MASTER_PREV = 0;
     private static final int VAL_SLAVE_NEXT = 3;
     private static final int VAL_SLAVE_PREV = 2;
     private final SpliceJoinLightRecordCursor cursor;
-    private final JoinContext joinContext;
-    private final RecordCursorFactory masterFactory;
     private final RecordSink masterKeySink;
-    private final RecordCursorFactory slaveFactory;
     private final RecordSink slaveKeySink;
 
     public SpliceJoinLightRecordCursorFactory(
@@ -77,14 +73,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
             RecordSink masterSink,
             RecordSink slaveSink,
             int columnSplit,
-            JoinContext context
+            JoinContext joinContext
     ) {
-        super(metadata);
-        this.masterFactory = masterFactory;
-        this.slaveFactory = slaveFactory;
+        super(metadata, joinContext, masterFactory, slaveFactory);
         this.masterKeySink = masterSink;
         this.slaveKeySink = slaveSink;
-        this.joinContext = context;
 
         Map joinKeyMap = MapFactory.createMap(
                 cairoConfiguration,
@@ -159,11 +152,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
         private boolean hasSlave;
         private boolean hasSlavePending = true;
         private boolean isOpen;
-        private long masterKeyAddress = -1;
+        private long masterKeyValueAddress = -1;
         private Record masterRecord;
         private Record masterRecord2;
         private long masterTimestamp = -1;
-        private long slaveKeyAddress = -1;
+        private long slaveKeyValueAddress = -1;
         private Record slaveRecord;
         private Record slaveRecord2;
         private long slaveTimestamp = -1;
@@ -216,7 +209,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                     final MapKey key = joinKeyMap.withKey();
                     key.put(masterRecord, masterKeySink);
                     final MapValue value = key.createValue();
-                    masterKeyAddress = value.getAddress();
+                    masterKeyValueAddress = value.getStartAddress();
                     if (value.isNew()) {
                         value.putLong(VAL_MASTER_PREV, NULL_ROWID);
                         value.putLong(VAL_SLAVE_PREV, NULL_ROWID);
@@ -241,7 +234,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                     final MapKey key = joinKeyMap.withKey();
                     key.put(slaveRecord, slaveKeySink);
                     final MapValue value = key.createValue();
-                    slaveKeyAddress = value.getAddress();
+                    slaveKeyValueAddress = value.getStartAddress();
                     if (value.isNew()) {
                         value.putLong(VAL_MASTER_PREV, NULL_ROWID);
                         value.putLong(VAL_MASTER_NEXT, NULL_ROWID);
@@ -272,7 +265,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
                 if (slaveTimestamp == Long.MAX_VALUE) {
                     return false;
                 }
-                if (masterKeyAddress == slaveKeyAddress) {
+                if (masterKeyValueAddress == slaveKeyValueAddress) {
                     record.of(masterRecord, slaveRecord);
                 } else {
                     masterRecordLeads();
@@ -298,7 +291,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
 
         private void masterRecordLeads() {
             // lookup previous slave
-            final long rowid = joinKeyMap.valueAt(masterKeyAddress).getLong(hasSlave ? VAL_SLAVE_PREV : VAL_SLAVE_NEXT);
+            final long rowid = joinKeyMap.valueAt(masterKeyValueAddress).getLong(hasSlave ? VAL_SLAVE_PREV : VAL_SLAVE_NEXT);
             if (rowid == NULL_ROWID) {
                 record.of(masterRecord, nullSlaveRecord);
             } else {
@@ -309,8 +302,8 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
 
         private void resetState() {
             joinKeyMap.clear();
-            masterKeyAddress = -1L;
-            slaveKeyAddress = -1L;
+            masterKeyValueAddress = -1L;
+            slaveKeyValueAddress = -1L;
             masterTimestamp = -1L;
             slaveTimestamp = -1L;
             fetchMaster = true;
@@ -323,7 +316,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractRecordCursorFact
 
         private void slaveRecordLeads() {
             // lookup previous master
-            final long rowid = joinKeyMap.valueAt(slaveKeyAddress).getLong(hasMaster ? VAL_MASTER_PREV : VAL_MASTER_NEXT);
+            final long rowid = joinKeyMap.valueAt(slaveKeyValueAddress).getLong(hasMaster ? VAL_MASTER_PREV : VAL_MASTER_NEXT);
             if (rowid == NULL_ROWID) {
                 record.of(nullMasterRecord, slaveRecord);
             } else {

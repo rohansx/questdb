@@ -26,137 +26,105 @@ package io.questdb.cairo;
 
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 public interface SecurityContext {
+    // Implementations are free to define unique authentication types.
+    // The user authenticated with credentials.
+    byte AUTH_TYPE_CREDENTIALS = 1;
+    // The user authenticated with a JWK token.
+    byte AUTH_TYPE_JWK_TOKEN = 2;
+    // The context is not aware of authentication types.
+    byte AUTH_TYPE_NONE = 0;
 
-    default void assumeRole(CharSequence roleName) {
-    }
+    void authorizeAdminAction();
 
-    default void authorizeAddPassword() {
-    }
+    void authorizeAlterTableAddColumn(TableToken tableToken);
 
-    default void authorizeAddUser() {
-    }
+    void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableAddColumn(TableToken tableToken) {
-    }
+    void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableAddIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableAttachPartition(TableToken tableToken);
 
-    default void authorizeAlterTableAlterColumnCache(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableDedupDisable(TableToken tableToken);
 
-    default void authorizeAlterTableAttachPartition(TableToken tableToken) {
-    }
+    void authorizeAlterTableDedupEnable(TableToken tableToken);
 
-    default void authorizeAlterTableDetachPartition(TableToken tableToken) {
-    }
+    void authorizeAlterTableDetachPartition(TableToken tableToken);
 
-    default void authorizeAlterTableDropColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableDropColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableDropIndex(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
+    void authorizeAlterTableDropIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
-    default void authorizeAlterTableDropPartition(TableToken tableToken) {
-    }
+    void authorizeAlterTableDropPartition(TableToken tableToken);
 
     // the names are pairs from-to
-    default void authorizeAlterTableRenameColumn(TableToken tableToken, ObjList<CharSequence> columnNames) {
+    void authorizeAlterTableRenameColumn(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeAlterTableSetType(TableToken tableToken);
+
+    void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
+
+    void authorizeDatabaseSnapshot();
+
+    void authorizeHttp();
+
+    void authorizeInsert(TableToken tableToken);
+
+    void authorizeLineTcp();
+
+    void authorizePGWire();
+
+    void authorizeResumeWal(TableToken tableToken);
+
+    void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeSelectOnAnyColumn(TableToken tableToken);
+
+    void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
+
+    void authorizeTableCreate();
+
+    void authorizeTableDrop(TableToken tableToken);
+
+    // columnNames - empty means all indexed columns
+    void authorizeTableReindex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeTableRename(TableToken tableToken);
+
+    void authorizeTableTruncate(TableToken tableToken);
+
+    void authorizeTableUpdate(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
+    void authorizeTableVacuum(TableToken tableToken);
+
+    /**
+     * Should throw an exception if:
+     * - logged in as a user and the user has been disabled, or it has no permissions to connect via the endpoint used,
+     * - logged in as a service account and the service account has been disabled, or it has no permissions to connect via the endpoint used,
+     * - logged in as a user, then assumed a service account and either the user or the service account has been disabled,
+     * or either the user or the service account has no permissions to connect via the endpoint used,
+     * or access to the service account has been revoked from the user
+     */
+    void checkEntityEnabled();
+
+    default CharSequence getAssumedServiceAccount() {
+        final CharSequence principal = getPrincipal();
+        final CharSequence sessionPrincipal = getSessionPrincipal();
+        return sessionPrincipal == null || sessionPrincipal.equals(principal) ? null : principal;
     }
 
-    default void authorizeAlterTableSetType(TableToken tableToken) {
-    }
+    /**
+     * User account used for permission checks, i.e. the session user account
+     * or the service account defined by an executed ASSUME statement.
+     */
+    CharSequence getPrincipal();
 
-    default void authorizeAssignRole() {
-    }
-
-    default void authorizeCopy() {
-    }
-
-    default void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
-    }
-
-    default void authorizeCreateGroup() {
-    }
-
-    default void authorizeCreateJwk() {
-    }
-
-    default void authorizeCreateRole() {
-    }
-
-    default void authorizeCreateUser() {
-    }
-
-    default void authorizeDatabaseSnapshot() {
-    }
-
-    default void authorizeDisableUser() {
-    }
-
-    default void authorizeDropGroup() {
-    }
-
-    default void authorizeDropJwk() {
-    }
-
-    default void authorizeDropRole() {
-    }
-
-    default void authorizeDropUser() {
-    }
-
-    default void authorizeEnableUser() {
-    }
-
-    @SuppressWarnings("unused")
-    default void authorizeGrant(ObjHashSet<TableToken> tableTokens) {
-    }
-
-    // columnNames.size() = 0 means all columns
-    default void authorizeInsert(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    default void authorizeRemovePassword() {
-    }
-
-    default void authorizeRemoveUser() {
-    }
-
-    default void authorizeSelect(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    default void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
-    }
-
-    default void authorizeTableCreate() {
-    }
-
-    default void authorizeTableDrop(TableToken tableToken) {
-    }
-
-    // columnName = null means all columns
-    default void authorizeTableReindex(TableToken tableToken, @Nullable CharSequence columnName) {
-    }
-
-    default void authorizeTableRename(TableToken tableToken) {
-    }
-
-    default void authorizeTableTruncate(TableToken tableToken) {
-    }
-
-    default void authorizeTableUpdate(TableToken tableToken, ObjList<CharSequence> columnNames) {
-    }
-
-    default void authorizeTableVacuum(TableToken tableToken) {
-    }
-
-    default void authorizeUnassignRole() {
-    }
-
-    default void exitRole(CharSequence roleName) {
+    /**
+     * User account used in initial authentication, i.e. to start the session.
+     */
+    default CharSequence getSessionPrincipal() {
+        return getPrincipal();
     }
 }

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.CharSinkBase;
 import io.questdb.std.str.CharSink;
 
 public abstract class TimestampFunction implements ScalarFunction {
@@ -100,6 +101,11 @@ public abstract class TimestampFunction implements ScalarFunction {
     }
 
     @Override
+    public final int getIPv4(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -120,7 +126,7 @@ public abstract class TimestampFunction implements ScalarFunction {
     }
 
     @Override
-    public void getLong256(Record rec, CharSink sink) {
+    public void getLong256(Record rec, CharSinkBase<?> sink) {
         throw new UnsupportedOperationException();
     }
 

@@ -33,7 +33,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectByteCharSequence;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -58,15 +59,15 @@ public class CairoTextWriter implements Closeable, Mutable {
     private long o3MaxLag = -1;
     private boolean overwrite;
     private int partitionBy;
-    private long size;
     private CharSequence tableName;
     private TimestampAdapter timestampAdapter;
     private int timestampIndex = NO_INDEX;
     private ObjList<TypeAdapter> types;
     private int warnings;
-    private TableWriter writer;
-    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
+    private TableWriterAPI writer;
+    private int writtenLineCount;
     private final CsvTextLexer.Listener partitionedListener = this::onFieldsPartitioned;
+    private final CsvTextLexer.Listener nonPartitionedListener = this::onFieldsNonPartitioned;
 
     public CairoTextWriter(CairoEngine engine) {
         this.engine = engine;
@@ -80,12 +81,14 @@ public class CairoTextWriter implements Closeable, Mutable {
         metadata = null;
         columnErrorCounts.clear();
         timestampAdapter = null;
-        size = 0;
+        writtenLineCount = 0;
         warnings = TextLoadWarning.NONE;
         designatedTimestampColumnName = null;
         designatedTimestampIndex = NO_INDEX;
         timestampIndex = NO_INDEX;
         importedTimestampColumnName = null;
+        maxUncommittedRows = -1;
+        o3MaxLag = -1;
         remapIndex.clear();
     }
 
@@ -110,8 +113,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         return columnErrorCounts;
     }
 
+    public int getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    public long getO3MaxLag() {
+        return o3MaxLag;
     }
 
     public int getPartitionBy() {
@@ -135,7 +146,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     }
 
     public long getWrittenLineCount() {
-        return writer == null ? 0 : writer.size() - size;
+        return writtenLineCount;
     }
 
     public void of(
@@ -152,36 +163,40 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.importedTimestampColumnName = timestampColumn;
     }
 
-    public void onFieldsNonPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+    public void onFieldsNonPartitioned(long line, ObjList<DirectUtf8String> values, int valuesLength) {
         final TableWriter.Row w = writer.newRow();
         for (int i = 0; i < valuesLength; i++) {
-            final DirectByteCharSequence dbcs = values.getQuick(i);
-            if (dbcs.length() == 0) {
+            final DirectUtf8String dus = values.getQuick(i);
+            if (dus.size() == 0) {
                 continue;
             }
-            if (onField(line, dbcs, w, i)) return;
+            if (onField(line, dus, w, i)) {
+                return;
+            }
         }
         w.append();
+        writtenLineCount++;
     }
 
-    public void onFieldsPartitioned(long line, ObjList<DirectByteCharSequence> values, int valuesLength) {
+    public void onFieldsPartitioned(long line, ObjList<DirectUtf8String> values, int valuesLength) {
         final int timestampIndex = this.timestampIndex;
-        DirectByteCharSequence dbcs = values.getQuick(timestampIndex);
+        DirectUtf8String dus = values.getQuick(timestampIndex);
         try {
-            final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dbcs));
+            final TableWriter.Row w = writer.newRow(timestampAdapter.getTimestamp(dus));
             for (int i = 0; i < valuesLength; i++) {
-                dbcs = values.getQuick(i);
-                if (i == timestampIndex || dbcs.length() == 0) {
+                dus = values.getQuick(i);
+                if (i == timestampIndex || dus.size() == 0) {
                     continue;
                 }
-                if (onField(line, dbcs, w, i)) {
+                if (onField(line, dus, w, i)) {
                     return;
                 }
             }
             w.append();
+            writtenLineCount++;
             checkUncommittedRowCount();
         } catch (Exception e) {
-            logError(line, timestampIndex, dbcs);
+            logError(line, timestampIndex, dus);
         }
     }
 
@@ -194,8 +209,8 @@ public class CairoTextWriter implements Closeable, Mutable {
     }
 
     private void checkUncommittedRowCount() {
-        if (writer != null && maxUncommittedRows > 0 && writer.getO3RowCount() >= maxUncommittedRows) {
-            writer.ic(this.o3MaxLag);
+        if (writer != null && maxUncommittedRows > 0 && writer.getUncommittedRowCount() >= maxUncommittedRows) {
+            writer.ic(o3MaxLag);
         }
     }
 
@@ -217,13 +232,17 @@ public class CairoTextWriter implements Closeable, Mutable {
         return tableToken;
     }
 
+    private CharSequence getDesignatedTimestampColumnName(RecordMetadata metadata) {
+        return metadata.getTimestampIndex() > -1 ? metadata.getColumnName(metadata.getTimestampIndex()) : null;
+    }
+
     private void initWriterAndOverrideImportTypes(
             TableToken tableToken,
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> detectedTypes,
             TypeManager typeManager
     ) {
-        final TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
+        final TableWriterAPI writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
         // Now, compare column count. Cannot continue if different.
@@ -280,9 +299,9 @@ public class CairoTextWriter implements Closeable, Mutable {
         this.metadata = metadata;
     }
 
-    private void logError(long line, int i, DirectByteCharSequence dbcs) {
+    private void logError(long line, int i, DirectUtf8Sequence dus) {
         LogRecord logRecord = LOG.error().$("type syntax [type=").$(ColumnType.nameOf(types.getQuick(i).getType())).$("]\n\t");
-        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dbcs).$();
+        logRecord.$('[').$(line).$(':').$(i).$("] -> ").$(dus).$();
         columnErrorCounts.increment(i);
     }
 
@@ -290,16 +309,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         LOG.info()
                 .$("mis-detected [table=").$(tableName)
                 .$(", column=").$(i)
-                .$(", type=").$(ColumnType.nameOf(this.types.getQuick(i).getType()))
+                .$(", type=").$(ColumnType.nameOf(types.getQuick(i).getType()))
                 .$(']').$();
     }
 
-    private boolean onField(long line, DirectByteCharSequence dbcs, TableWriter.Row w, int i) {
+    private boolean onField(long line, DirectUtf8Sequence dus, TableWriter.Row w, int i) {
         try {
             final int tableIndex = remapIndex.size() > 0 ? remapIndex.get(i) : i;
-            types.getQuick(i).write(w, tableIndex, dbcs);
+            types.getQuick(i).write(w, tableIndex, dus);
         } catch (Exception ignore) {
-            logError(line, i, dbcs);
+            logError(line, i, dus);
             switch (atomicity) {
                 case Atomicity.SKIP_ALL:
                     writer.rollback();
@@ -329,58 +348,61 @@ public class CairoTextWriter implements Closeable, Mutable {
             throw CairoException.nonCritical().put("cannot determine text structure");
         }
 
-        boolean canUpdateMetadata = true;
-        TableToken tableToken = engine.getTableTokenIfExists(tableName);
-
-        switch (engine.getTableStatus(path, tableToken)) {
+        TableToken tableToken;
+        boolean tableReCreated = false;
+        switch (engine.getTableStatus(path, tableName)) {
             case TableUtils.TABLE_DOES_NOT_EXIST:
                 tableToken = createTable(names, detectedTypes, securityContext, path);
-                writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
+                tableReCreated = true;
+                writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                 metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
-                designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
+                designatedTimestampColumnName = getDesignatedTimestampColumnName(metadata);
                 designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
-                partitionBy = writer.getPartitionBy();
                 break;
             case TableUtils.TABLE_EXISTS:
+                tableToken = engine.getTableTokenIfExists(tableName);
                 if (overwrite) {
+                    securityContext.authorizeTableDrop(tableToken);
                     engine.drop(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
-                    writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
+                    tableReCreated = true;
+                    writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 } else {
-                    canUpdateMetadata = false;
                     initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager);
-                    designatedTimestampColumnName = writer.getDesignatedTimestampColumnName();
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
-                    if (importedTimestampColumnName != null &&
-                            !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
+                    designatedTimestampColumnName = getDesignatedTimestampColumnName(writer.getMetadata());
+                    if (importedTimestampColumnName != null
+                            && !Chars.equalsNc(importedTimestampColumnName, designatedTimestampColumnName)) {
                         warnings |= TextLoadWarning.TIMESTAMP_MISMATCH;
                     }
-                    if (PartitionBy.isPartitioned(partitionBy) && partitionBy != writer.getPartitionBy()) {
+                    int tablePartitionBy = TableUtils.getPartitionBy(writer.getMetadata(), engine);
+                    if (PartitionBy.isPartitioned(partitionBy) && partitionBy != tablePartitionBy) {
                         warnings |= TextLoadWarning.PARTITION_TYPE_MISMATCH;
                     }
-                    partitionBy = writer.getPartitionBy();
+                    partitionBy = tablePartitionBy;
                     tableStructureAdapter.of(names, detectedTypes);
+                    securityContext.authorizeInsert(tableToken);
                 }
                 break;
             default:
                 throw CairoException.nonCritical().put("name is reserved [table=").put(tableName).put(']');
         }
-        if (canUpdateMetadata) {
-            if (PartitionBy.isPartitioned(partitionBy)) {
-                if (o3MaxLag > -1) {
-                    writer.setMetaO3MaxLag(o3MaxLag);
-                    LOG.info().$("updating metadata attribute o3MaxLag to ").$(o3MaxLag).$(", table=").utf8(tableName).$();
-                }
-                if (maxUncommittedRows > -1) {
-                    writer.setMetaMaxUncommittedRows(maxUncommittedRows);
-                    LOG.info().$("updating metadata attribute maxUncommittedRows to ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
-                }
-            }
-        } else {
+        if (!tableReCreated && (o3MaxLag > -1 || maxUncommittedRows > -1)) {
             LOG.info().$("cannot update metadata attributes o3MaxLag and maxUncommittedRows when the table exists and parameter overwrite is false").$();
         }
-        size = writer.size();
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            // We want to limit memory consumption during the import, so make sure
+            // to use table's maxUncommittedRows and o3MaxLag if they're not set.
+            if (o3MaxLag == -1 && !writer.getMetadata().isWalEnabled()) {
+                o3MaxLag = TableUtils.getO3MaxLag(writer.getMetadata(), engine);
+                LOG.info().$("using table's o3MaxLag ").$(o3MaxLag).$(", table=").utf8(tableName).$();
+            }
+            if (maxUncommittedRows == -1) {
+                maxUncommittedRows = TableUtils.getMaxUncommittedRows(writer.getMetadata(), engine);
+                LOG.info().$("using table's maxUncommittedRows ").$(maxUncommittedRows).$(", table=").utf8(tableName).$();
+            }
+        }
         columnErrorCounts.seed(writer.getMetadata().getColumnCount(), 0);
 
         if (timestampIndex != NO_INDEX) {
@@ -418,12 +440,12 @@ public class CairoTextWriter implements Closeable, Mutable {
 
         @Override
         public int getMaxUncommittedRows() {
-            return configuration.getMaxUncommittedRows();
+            return maxUncommittedRows > -1 && PartitionBy.isPartitioned(partitionBy) ? maxUncommittedRows : configuration.getMaxUncommittedRows();
         }
 
         @Override
         public long getO3MaxLag() {
-            return configuration.getO3MaxLag();
+            return o3MaxLag > -1 && PartitionBy.isPartitioned(partitionBy) ? o3MaxLag : configuration.getO3MaxLag();
         }
 
         @Override
@@ -449,6 +471,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return false;
         }
 
         @Override

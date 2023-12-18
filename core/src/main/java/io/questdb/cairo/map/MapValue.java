@@ -43,8 +43,6 @@ public interface MapValue extends Record {
 
     void addShort(int index, short value);
 
-    long getAddress();
-
     boolean getBool(int index);
 
     byte getByte(int index);
@@ -57,11 +55,21 @@ public interface MapValue extends Record {
 
     float getFloat(int index);
 
+    int getIPv4(int index);
+
     int getInt(int index);
 
     long getLong(int index);
 
     short getShort(int index);
+
+    /**
+     * Depending on Map implementation, returns either the key-value pair start address (FastMap)
+     * or the value address (other Maps).
+     * <p>
+     * In any case, the returned value can be used to make a {@link Map#valueAt(long)} call.
+     */
+    long getStartAddress();
 
     long getTimestamp(int index);
 
